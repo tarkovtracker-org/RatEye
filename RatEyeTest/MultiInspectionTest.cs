@@ -43,10 +43,6 @@ namespace RatEyeTest
 				{
 					Scale = scale,
 					Language = language,
-					InspectionConfig = new Config.Processing.Inspection()
-					{
-						MarkerThreshold = 0.9f,
-					}
 				}
 			};
 			return new RatEyeEngine(config, GetItemDatabase());

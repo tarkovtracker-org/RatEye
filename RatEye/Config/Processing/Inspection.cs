@@ -22,12 +22,12 @@ namespace RatEye
 				/// <summary>
 				/// Detection threshold of the marker bitmap
 				/// </summary>
-				public float MarkerThreshold = 0.93f;
+				public float MarkerThreshold = 0.82f;
 
 				/// <summary>
 				/// The scale of the marker used by item inspection windows
 				/// </summary>
-				public float MarkerItemScale = 17f / 19f;
+				public float MarkerItemScale = 16f / 21f;
 
 				/// <summary>
 				/// The background color used for the marker if it uses a alpha channel
