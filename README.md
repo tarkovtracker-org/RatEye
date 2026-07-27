@@ -11,6 +11,12 @@ screen capture, crop geometry, UI, application settings, and item-data
 retrieval. RatEye owns OCR, marker detection, inventory-grid processing,
 template matching, replay contracts, and stage timing.
 
+Inventory icon scans use template matching first. When a template result is
+low-confidence and traineddata is available, RatEye verifies the visible
+top-right short name with OCR and only replaces the result when it maps to one
+unique exact catalog short name. This keeps UI state decorations such as
+wishlist and found-in-raid badges from deciding item identity.
+
 ## Supported environment
 
 RatEye targets `netstandard2.0`, but its current OpenCvSharp native runtime is

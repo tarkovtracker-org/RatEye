@@ -121,6 +121,11 @@ public class RatEyeCacheTests
 	private static void WriteIcon(string path)
 	{
 		using Bitmap bitmap = new(64, 64);
+		using (Graphics graphics = Graphics.FromImage(bitmap))
+		{
+			using Brush brush = new SolidBrush(System.Drawing.Color.White);
+			graphics.FillEllipse(brush, 16, 16, 32, 32);
+		}
 		bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
 	}
 

@@ -74,10 +74,13 @@ dotnet run --project RatEye.Benchmarks -- ^
 ```
 
 The runner searches recursively for `*.ratdiag.json`. `--icons` is needed for
-template matching; `--traineddata` is needed for OCR. The report records
-detections, confidences, expected-result status, and timings such as marker
-search, OCR preprocessing/recognition, item matching, inventory grid
-detection/parsing, and icon template matching.
+template matching. `--traineddata` is needed for inspection OCR, explicit icon
+OCR mode, and the exact-short-name verification used by low-confidence
+template matches. Without traineddata, template matching still runs but cannot
+perform that verification. The report records detections, confidences,
+expected-result status, and timings such as marker search, OCR
+preprocessing/recognition, item matching, inventory grid detection/parsing,
+icon template matching, and `icon.ocr_verify`.
 
 ## Fixture contribution guidance
 

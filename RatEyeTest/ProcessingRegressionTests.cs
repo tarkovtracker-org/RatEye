@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using OpenCvSharp;
 using RatEye;
 using Xunit;
@@ -22,6 +23,7 @@ public class IconManagerTests
 		{
 			WriteIcon(System.IO.Path.Combine(icons, "one.png"), 64, 64);
 			WriteIcon(System.IO.Path.Combine(icons, "two.png"), 127, 64);
+			WriteIcon(System.IO.Path.Combine(icons, "blank.png"), 64, 64, visible: false);
 
 			Config config = new()
 			{
@@ -48,6 +50,14 @@ public class IconManagerTests
 						Width = 2,
 						Height = 1,
 					},
+					new()
+					{
+						Id = "blank",
+						Name = "Blank",
+						ShortName = "Blank",
+						Width = 1,
+						Height = 1,
+					},
 				]),
 			};
 
@@ -66,9 +76,15 @@ public class IconManagerTests
 		}
 	}
 
-	private static void WriteIcon(string path, int width, int height)
+	private static void WriteIcon(string path, int width, int height, bool visible = true)
 	{
 		using Bitmap bitmap = new(width, height);
+		if (visible)
+		{
+			using Graphics graphics = Graphics.FromImage(bitmap);
+			using Brush brush = new SolidBrush(Color.White);
+			graphics.FillEllipse(brush, width / 4, height / 4, width / 2, height / 2);
+		}
 		bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
 	}
 }
@@ -95,6 +111,62 @@ public class ProcessingRegressionTests
 		Assert.Equal(5, cropped.Width);
 		Assert.Equal(5, cropped.Height);
 		Assert.Throws<ArgumentOutOfRangeException>(() => source.Crop(30, 30, 5, 5));
+	}
+
+	[Theory]
+	[InlineData("F-1/", "f-1")]
+	[InlineData(" F-1[\r\n", "f-1")]
+	[InlineData("", "")]
+	public void Icon_OCR_short_name_normalization_removes_UI_noise(
+		string source,
+		string expected
+	) => Assert.Equal(expected, RatEye.Processing.Icon.NormalizeOcrShortName(source));
+
+	[Fact]
+	public void Icon_OCR_short_name_verification_requires_a_unique_exact_match()
+	{
+		RatStash.Item expected = new() { Id = "f1", ShortName = "F-1" };
+		RatStash.Item other = new() { Id = "other", ShortName = "Other" };
+
+		Assert.Same(
+			expected,
+			RatEye.Processing.Icon.FindUniqueExactShortName([expected, other], "F-1/")
+		);
+		Assert.Null(
+			RatEye.Processing.Icon.FindUniqueExactShortName(
+				[expected, new RatStash.Item { Id = "duplicate", ShortName = "F-1" }],
+				"F-1"
+			)
+		);
+	}
+
+	[Fact]
+	public void Inventory_locates_adjacent_current_ui_cells_from_one_pixel_borders()
+	{
+		using Bitmap source = new(250, 150);
+		using (Graphics graphics = Graphics.FromImage(source))
+		{
+			graphics.Clear(Color.Black);
+			using Pen gridPen = new(Color.FromArgb(73, 81, 84), 1);
+			graphics.DrawRectangle(gridPen, 11, 36, 84, 84);
+			graphics.DrawRectangle(gridPen, 95, 36, 84, 84);
+		}
+
+		Config config = new()
+		{
+			ProcessingConfig = new Config.Processing
+			{
+				Scale = 4f / 3f,
+				InventoryConfig = new Config.Processing.Inventory { OptimizeHighlighted = false },
+			},
+		};
+
+		using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		using RatEye.Processing.Inventory inventory = engine.NewInventory(source);
+
+		Assert.Equal(2, inventory.Icons.Count());
+		Assert.NotNull(inventory.LocateIcon(new Vector2(53, 79)));
+		Assert.NotNull(inventory.LocateIcon(new Vector2(137, 79)));
 	}
 
 	[Fact]
