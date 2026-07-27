@@ -7,8 +7,10 @@ namespace RatEye
 	/// <summary>
 	/// Core class which allows creating new processing objects
 	/// </summary>
-	public class RatEyeEngine
+	public class RatEyeEngine : System.IDisposable
 	{
+		private bool _disposed;
+
 		/// <summary>
 		/// The config which is used for this <see cref="RatEyeEngine"/>
 		/// </summary>
@@ -29,6 +31,7 @@ namespace RatEye
 
 			System.IO.Directory.CreateDirectory(config.PathConfig.CacheDir);
 
+			config.ProcessingConfig.InspectionConfig.EnsureMarker();
 			Config.IconManager = new IconManager(config);
 		}
 
@@ -57,6 +60,36 @@ namespace RatEye
 		public Inventory NewInventory(Bitmap image)
 		{
 			return new Inventory(image, Config);
+		}
+
+		/// <summary>
+		/// Create a new icon-processing instance from an already cropped icon image.
+		/// </summary>
+		/// <param name="image">The cropped icon image to process.</param>
+		/// <param name="position">Position of the crop in its source image.</param>
+		/// <param name="size">Size of the detected item region.</param>
+		public Processing.Icon NewIcon(Bitmap image, Vector2 position, Vector2 size)
+		{
+			return new Processing.Icon(image, position, size, Config);
+		}
+
+		/// <summary>
+		/// Releases processing resources owned by this engine instance.
+		/// </summary>
+		public void Dispose()
+		{
+			if (_disposed)
+				return;
+
+			Config.IconManager?.Dispose();
+			Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
+			Config.ProcessingConfig.InspectionConfig.TesseractEngine = null;
+			Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();
+			Config.ProcessingConfig.IconConfig.TesseractEngine = null;
+			Config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Config.ProcessingConfig.InspectionConfig.Marker = null;
+			_disposed = true;
+			System.GC.SuppressFinalize(this);
 		}
 	}
 }

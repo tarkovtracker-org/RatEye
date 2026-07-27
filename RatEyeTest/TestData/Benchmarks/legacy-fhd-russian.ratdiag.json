@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "legacy-fhd-russian",
+  "scanType": "inspection",
+  "imageFile": "../FHD/Item_Russian.png",
+  "expectedItemIds": [
+    "61f7b234ea4ab34f2f59c3ec"
+  ],
+  "configuration": {
+    "scale": 1.0,
+    "language": "Russian",
+    "optimizeHighlighted": false,
+    "useStaticIcons": false,
+    "scanRotatedIcons": false
+  },
+  "context": {
+    "captureWidth": 1920,
+    "captureHeight": 1080,
+    "displayWidth": 1920,
+    "displayHeight": 1080,
+    "dpiScale": 1.0
+  }
+}

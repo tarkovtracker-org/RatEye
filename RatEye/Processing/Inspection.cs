@@ -25,6 +25,13 @@ namespace RatEye.Processing
 		private Vector2 _markerPosition;
 		private float _markerConfidence;
 		private string _title = "";
+		private Item _item;
+		private float _itemConfidence;
+
+		/// <summary>
+		/// Elapsed processing time recorded for this inspection.
+		/// </summary>
+		public ProcessingTimings Timings { get; } = new ProcessingTimings();
 
 		/// <summary>
 		/// Position of the marker in the given image
@@ -80,14 +87,27 @@ namespace RatEye.Processing
 			get
 			{
 				SatisfyState(State.ScannedTitle);
-				return GetItem();
+				return _item;
+			}
+		}
+
+		/// <summary>
+		/// Similarity between the OCR title and the detected item's name.
+		/// </summary>
+		public float ItemConfidence
+		{
+			get
+			{
+				SatisfyState(State.ScannedTitle);
+				return _itemConfidence;
 			}
 		}
 
 		/// <summary>
 		/// The path to the icon of the detected item
 		/// </summary>
-		public string IconPath => _config.IconManager.GetIconPath(Item, new ItemExtraInfo());
+		public string IconPath =>
+			Item == null ? null : _config.IconManager.GetIconPath(Item, new ItemExtraInfo());
 
 		/// <summary>
 		/// Constructor for inspection view processing object
@@ -109,7 +129,12 @@ namespace RatEye.Processing
 		/// <param name="markerPosition">Position of the marker in the given image</param>
 		/// <param name="markerConfidence">Confidence of the marker in the given image</param>
 		/// <remarks>Provided image has to be in RGB</remarks>
-		internal Inspection(Bitmap image, Config config, Vector2 markerPosition, float markerConfidence)
+		internal Inspection(
+			Bitmap image,
+			Config config,
+			Vector2 markerPosition,
+			float markerConfidence
+		)
 		{
 			_config = config;
 			_image = image;
@@ -158,11 +183,14 @@ namespace RatEye.Processing
 		/// </summary>
 		private void SearchMarker()
 		{
+			long started = ProcessingTimings.Start();
 			SatisfyState(State.Default);
 
-			var marker = GetMarkerPosition(GetScaledMarker());
-			MarkerConfidence = marker.confidence;
-			MarkerPosition = marker.position;
+			using Bitmap marker = GetScaledMarker();
+			var (confidence, position) = GetMarkerPosition(marker);
+			MarkerConfidence = confidence;
+			MarkerPosition = position;
+			Timings.RecordSince("inspection.marker_search", started);
 		}
 
 		/// <summary>
@@ -175,7 +203,11 @@ namespace RatEye.Processing
 		{
 			using var refMat = _image.ToMat();
 			using var tplMat = marker.ToMat(); // tpl = template
-			using var res = new Mat(refMat.Rows - tplMat.Rows + 1, refMat.Cols - tplMat.Cols + 1, MatType.CV_32FC1);
+			using var res = new Mat(
+				refMat.Rows - tplMat.Rows + 1,
+				refMat.Cols - tplMat.Cols + 1,
+				MatType.CV_32FC1
+			);
 
 			// Gray scale both reference and template image
 			using var gref = refMat.CvtColor(ColorConversionCodes.RGB2GRAY);
@@ -190,27 +222,38 @@ namespace RatEye.Processing
 
 		private void ScanTitle()
 		{
+			long started = ProcessingTimings.Start();
 			if (!ContainsMarker)
 			{
 				// No marker? Why even bother scanning...
 				Logger.LogDebug("No marker found!");
+				Timings.RecordSince("inspection.title_scan", started);
 				return;
 			}
 
 			// Compute title search box dimensions
-			var position = MarkerPosition;
+			var position = new Vector2(MarkerPosition.X, MarkerPosition.Y);
 			position.X += GetHorizontalTitleSearchOffset();
 
 			// Find end of the title bar
-			var scaledMarker = GetScaledMarker();
+			using Bitmap scaledMarker = GetScaledMarker();
 			var closeBtnCenterHeight = MarkerPosition.Y + (scaledMarker.Height / 2);
 			var lowC = InspectionConfig.CloseButtonColorLowerBound;
 			var upC = InspectionConfig.CloseButtonColorUpperBound;
-			var closeButtonPosition = _image.FindPixelInRange(closeBtnCenterHeight, lowC, upC, position.X);
+			var closeButtonPosition = _image.FindPixelInRange(
+				closeBtnCenterHeight,
+				lowC,
+				upC,
+				position.X
+			);
 
 			// Construct final search box dimensions
-			var scaledTitleSearchHeight = (int)(InspectionConfig.BaseTitleSearchHeight * ProcessingConfig.Scale);
-			var scaledTitleSearchWidth = (int)(InspectionConfig.BaseTitleSearchWidth * ProcessingConfig.Scale);
+			var scaledTitleSearchHeight = (int)(
+				InspectionConfig.BaseTitleSearchHeight * ProcessingConfig.Scale
+			);
+			var scaledTitleSearchWidth = (int)(
+				InspectionConfig.BaseTitleSearchWidth * ProcessingConfig.Scale
+			);
 			var height = Math.Min(scaledTitleSearchHeight, _image.Height - position.Y);
 			var width = Math.Min(scaledTitleSearchWidth, _image.Width - position.X);
 			if (closeButtonPosition > 0)
@@ -218,21 +261,58 @@ namespace RatEye.Processing
 				// Calculate width of search box to the close button edge
 				var tmpWidth = closeButtonPosition - position.X;
 				// Shorten the width to account for extra buttons ( for example sort buttons )
-				var titleSearchRightPadding =
-					(int)(InspectionConfig.BaseTitleSearchRightPadding * ProcessingConfig.Scale);
+				var titleSearchRightPadding = (int)(
+					InspectionConfig.BaseTitleSearchRightPadding * ProcessingConfig.Scale
+				);
 				tmpWidth -= titleSearchRightPadding;
 				// Apply new width if its the new minimum width
 				width = Math.Min(width, tmpWidth);
 			}
 
+			// A marker detected near the right edge can push the search box origin past the
+			// image bounds, yielding a non-positive width/height. Crop would throw and abort
+			// the scan, so bail out to an empty title (treated as "no match") instead.
+			if (width <= 0 || height <= 0)
+			{
+				Logger.LogDebug(
+					"Title search box has non-positive dimensions; skipping title scan."
+				);
+				Timings.RecordSince("inspection.title_scan", started);
+				return;
+			}
+
 			// Crop image to title search box
-			var searchBox = _image.Crop(position.X, position.Y, width, height);
+			using Bitmap searchBox = _image.Crop(position.X, position.Y, width, height);
 
 			// Rescale title search box to 4k, adjusting the font size to the training data
 			// We multiply the inverse scale with 2f to rescale to 4k instead of 1080p
-			var rescaledSearchBox = searchBox.Rescale(ProcessingConfig.InverseScale * 2f);
+			Bitmap rescaledSearchBox = searchBox.Rescale(ProcessingConfig.InverseScale * 2f);
+			try
+			{
+				// Use the _title backing field below: the Title getter calls
+				// SatisfyState(State.ScannedTitle), which re-enters ScanTitle()
+				// because _currentState only advances after this method returns.
+				Title = OCR(rescaledSearchBox);
+				if (IsUiChromeTitle(_title))
+				{
+					Logger.LogDebug(
+						"Title matches inventory/UI chrome; skipping item match: " + _title
+					);
+					_item = null;
+					_itemConfidence = 0;
+					Timings.RecordSince("inspection.title_scan", started);
+					return;
+				}
 
-			Title = OCR(rescaledSearchBox);
+				MatchItem();
+			}
+			finally
+			{
+				if (!ReferenceEquals(rescaledSearchBox, searchBox))
+					rescaledSearchBox.Dispose();
+			}
+
+			Timings.RecordSince("inspection.title_scan", started);
 		}
 
 		/// <summary>
@@ -242,24 +322,29 @@ namespace RatEye.Processing
 		/// <returns>Detected characters in image</returns>
 		private string OCR(Bitmap image)
 		{
+			long preprocessingStarted = ProcessingTimings.Start();
 			// Setup tesseract
 			using var mat = image.ToMat();
 
 			// Gray scale image
 			Logger.LogDebug("Gray scaling...");
-			var cvu83 = mat.CvtColor(ColorConversionCodes.BGR2GRAY, 1);
+			using var grayscale = mat.CvtColor(ColorConversionCodes.BGR2GRAY, 1);
 
 			// Binarize image
 			Logger.LogDebug("Binarizing...");
-			cvu83 = cvu83.Threshold(120, 255, ThresholdTypes.BinaryInv);
+			using var binary = grayscale.Threshold(120, 255, ThresholdTypes.BinaryInv);
 
 			// Convert to Pix
-			using var pix = PixConverter.ToPix(cvu83.ToBitmap());
+			using Bitmap binaryBitmap = binary.ToBitmap();
+			using var pix = PixConverter.ToPix(binaryBitmap);
+			Timings.RecordSince("inspection.ocr_preprocess", preprocessingStarted);
 
 			// OCR
+			long recognitionStarted = ProcessingTimings.Start();
 			Logger.LogDebug("Applying OCR...");
 			using var result = GetTesseractEngine().Process(pix);
 			var text = result.GetText();
+			Timings.RecordSince("inspection.ocr_recognize", recognitionStarted);
 
 			Logger.LogDebug("Read: " + text);
 			return text.CyrillicToLatin().Trim();
@@ -273,7 +358,8 @@ namespace RatEye.Processing
 		{
 			// Return if tesseract instance was already created
 			var tesseractEngine = InspectionConfig.TesseractEngine;
-			if (tesseractEngine != null) return tesseractEngine;
+			if (tesseractEngine != null)
+				return tesseractEngine;
 
 			// Check if trained data is present
 			var langCode = _config.ProcessingConfig.Language.ToISO3Code();
@@ -281,8 +367,7 @@ namespace RatEye.Processing
 			if (!File.Exists(traineddataPath))
 			{
 				var message = "Could not find traineddata at: " + traineddataPath;
-				var ex = new ArgumentException(message, PathConfig.TrainedData);
-				throw ex;
+				throw new FileNotFoundException(message, traineddataPath);
 			}
 
 			// Load additional language to expand the primary one
@@ -299,8 +384,14 @@ namespace RatEye.Processing
 			var language = langCode + addLang;
 
 			// Create a tesseract instance
-			InspectionConfig.TesseractEngine = new TesseractEngine(PathConfig.TrainedData, language, EngineMode.LstmOnly);
-			InspectionConfig.TesseractEngine.DefaultPageSegMode = PageSegMode.RawLine;
+			InspectionConfig.TesseractEngine = new TesseractEngine(
+				PathConfig.TrainedData,
+				language,
+				EngineMode.LstmOnly
+			)
+			{
+				DefaultPageSegMode = PageSegMode.RawLine,
+			};
 
 			return InspectionConfig.TesseractEngine;
 		}
@@ -312,8 +403,18 @@ namespace RatEye.Processing
 		/// <returns>A rescaled and alpha blended version of <see cref="Config.Processing.Inspection.Marker"/></returns>
 		private Bitmap GetScaledMarker()
 		{
-			var output = InspectionConfig.Marker.Rescale(InspectionConfig.MarkerItemScale * ProcessingConfig.Scale);
-			return output.TransparentToColor(InspectionConfig.MarkerBackgroundColor);
+			Bitmap output = InspectionConfig.Marker.Rescale(
+				InspectionConfig.MarkerItemScale * ProcessingConfig.Scale
+			);
+			try
+			{
+				return output.TransparentToColor(InspectionConfig.MarkerBackgroundColor);
+			}
+			finally
+			{
+				if (!ReferenceEquals(output, InspectionConfig.Marker))
+					output.Dispose();
+			}
 		}
 
 		/// <summary>
@@ -323,7 +424,8 @@ namespace RatEye.Processing
 		/// <returns>The distance between the right edge of the marker and the beginning of the title search box</returns>
 		private int GetHorizontalTitleSearchOffset()
 		{
-			var width = GetScaledMarker().Width;
+			using Bitmap marker = GetScaledMarker();
+			var width = marker.Width;
 			return (int)(width * InspectionConfig.HorizontalTitleSearchOffsetFactor);
 		}
 
@@ -331,15 +433,90 @@ namespace RatEye.Processing
 		/// Get the item, best matching the scanned title
 		/// </summary>
 		/// <returns>Item instance</returns>
-		private Item GetItem()
+		private void MatchItem()
 		{
-			var items = _config.RatStashDB.GetItems();
-			return items.Aggregate((i1, i2) =>
+			long started = ProcessingTimings.Start();
+			_item = null;
+			_itemConfidence = 0;
+			if (string.IsNullOrWhiteSpace(_title))
 			{
-				var i1Dist = i1.Name.CyrillicToLatin().NormedLevenshteinDistance(Title);
-				var i2Dist = i2.Name.CyrillicToLatin().NormedLevenshteinDistance(Title);
-				return i1Dist > i2Dist ? i1 : i2;
-			});
+				Timings.RecordSince("inspection.item_match", started);
+				return;
+			}
+
+			Item best = null;
+			float bestConfidence = 0;
+			foreach (Item item in _config.RatStashDB.GetItems())
+			{
+				float confidence = item.Name.CyrillicToLatin().NormedLevenshteinDistance(_title);
+				if (confidence <= bestConfidence)
+					continue;
+
+				best = item;
+				bestConfidence = confidence;
+			}
+
+			// Always surface the best score for diagnostics/UI, but only accept
+			// items when similarity clears MinItemConfidence.
+			_itemConfidence = bestConfidence;
+			if (best != null && bestConfidence >= InspectionConfig.MinItemConfidence)
+				_item = best;
+			else
+				Logger.LogDebug(
+					$"Best title match '{best?.Name}' confidence {bestConfidence:F3} below threshold {InspectionConfig.MinItemConfidence:F3}."
+				);
+
+			Timings.RecordSince("inspection.item_match", started);
+		}
+
+		/// <summary>
+		/// Titles that come from non-inspect UI (inventory search bar, etc.).
+		/// OCR of these must never resolve to a catalog item.
+		/// </summary>
+		/// <remarks>
+		/// Matching is case-insensitive and tolerates minor OCR noise via
+		/// <see cref="Extensions.NormedLevenshteinDistance"/>.
+		/// </remarks>
+		// Prefer multi-word / distinctive phrases. Single short tokens (e.g. DE "Suchen")
+		// are too easy to collide with real short item names under fuzzy matching.
+		internal static readonly string[] UiChromeTitles =
+		{
+			"Subject Search",
+			// Common localizations of the inventory filter placeholder.
+			"Поиск предмета",
+			"Rechercher un objet",
+			"Buscar objeto",
+			"Procurar item",
+			"Cerca oggetto",
+			"Szukaj przedmiotu",
+			"搜索物品",
+			"아이템 검색",
+			"アイテム検索",
+		};
+
+		private const float UiChromeTitleMatchThreshold = 0.85f;
+
+		/// <summary>
+		/// Returns <see langword="true"/> when <paramref name="title"/> is inventory/UI chrome
+		/// rather than an inspection-window item name.
+		/// </summary>
+		internal static bool IsUiChromeTitle(string title)
+		{
+			if (string.IsNullOrWhiteSpace(title))
+				return false;
+
+			string normalized = title.CyrillicToLatin().Trim().ToLowerInvariant();
+			foreach (string chrome in UiChromeTitles)
+			{
+				string chromeNormalized = chrome.CyrillicToLatin().Trim().ToLowerInvariant();
+				if (
+					chromeNormalized.NormedLevenshteinDistance(normalized)
+					>= UiChromeTitleMatchThreshold
+				)
+					return true;
+			}
+
+			return false;
 		}
 	}
 }

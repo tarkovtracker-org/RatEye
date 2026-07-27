@@ -1,9 +1,9 @@
-﻿using OpenCvSharp;
-using OpenCvSharp.Extensions;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using OpenCvSharp;
+using OpenCvSharp.Extensions;
 using Point = OpenCvSharp.Point;
 
 namespace RatEye.Processing
@@ -22,6 +22,11 @@ namespace RatEye.Processing
 
 		// Backing property fields
 		private List<Inspection> _inspections;
+
+		/// <summary>
+		/// Elapsed processing time recorded while locating inspection markers.
+		/// </summary>
+		public ProcessingTimings Timings { get; } = new ProcessingTimings();
 
 		/// <summary>
 		/// List of all inspections found in the image
@@ -84,11 +89,15 @@ namespace RatEye.Processing
 		/// </summary>
 		private void SearchMarker()
 		{
+			long started = ProcessingTimings.Start();
 			SatisfyState(State.Default);
 
-			var markers = GetMarkerPositions(GetScaledMarker());
-			var threshold = InspectionConfig.MarkerThreshold;
-			_inspections = markers.Select(marker => new Inspection(_image, _config, marker, threshold)).ToList();
+			using Bitmap marker = GetScaledMarker();
+			var markers = GetMarkerPositions(marker);
+			_inspections = markers
+				.Select(match => new Inspection(_image, _config, match.position, match.confidence))
+				.ToList();
+			Timings.RecordSince("multi_inspection.marker_search", started);
 		}
 
 		/// <summary>
@@ -97,23 +106,51 @@ namespace RatEye.Processing
 		/// <param name="marker">The marker template to identify</param>
 		/// <remarks>Provided marker has to be in RGB</remarks>
 		/// <returns>List of markers which confidence is above <see cref="Config.Processing.Inspection.MarkerThreshold"/></returns>
-		private List<Vector2> GetMarkerPositions(Bitmap marker)
+		private List<(Vector2 position, float confidence)> GetMarkerPositions(Bitmap marker)
 		{
 			using var refMat = _image.ToMat();
 			using var tplMat = marker.ToMat(); // tpl = template
-			using var res = new Mat(refMat.Rows - tplMat.Rows + 1, refMat.Cols - tplMat.Cols + 1, MatType.CV_32FC1);
+			using var res = new Mat(
+				refMat.Rows - tplMat.Rows + 1,
+				refMat.Cols - tplMat.Cols + 1,
+				MatType.CV_32FC1
+			);
 
 			// Gray scale both reference and template image
 			using var gref = refMat.CvtColor(ColorConversionCodes.RGB2GRAY);
 			using var gtpl = tplMat.CvtColor(ColorConversionCodes.RGB2GRAY);
 
 			Cv2.MatchTemplate(gref, gtpl, res, TemplateMatchModes.CCoeffNormed);
-			Cv2.Threshold(res, res, InspectionConfig.MarkerThreshold, 1, ThresholdTypes.Binary);
-			var nonZeroes = res.FindNonZero();
-			if (nonZeroes.Empty()) return new List<Vector2>();
 
-			nonZeroes.GetArray(out Point[] points);
-			return points.Select(point => new Vector2(point)).ToList();
+			return ExtractMarkerPeaks(res, marker.Size, InspectionConfig.MarkerThreshold);
+		}
+
+		internal static List<(Vector2 position, float confidence)> ExtractMarkerPeaks(
+			Mat response,
+			System.Drawing.Size markerSize,
+			float threshold
+		)
+		{
+			var matches = new List<(Vector2 position, float confidence)>();
+			while (true)
+			{
+				Cv2.MinMaxLoc(response, out _, out double maxValue, out _, out Point maxLocation);
+				if (maxValue < threshold)
+					break;
+
+				matches.Add((new Vector2(maxLocation), (float)maxValue));
+
+				int left = Math.Max(0, maxLocation.X - markerSize.Width / 2);
+				int top = Math.Max(0, maxLocation.Y - markerSize.Height / 2);
+				int right = Math.Min(response.Width, maxLocation.X + markerSize.Width / 2 + 1);
+				int bottom = Math.Min(response.Height, maxLocation.Y + markerSize.Height / 2 + 1);
+				using Mat suppressionRegion = response[
+					new Rect(left, top, right - left, bottom - top)
+				];
+				suppressionRegion.SetTo(Scalar.All(-1));
+			}
+
+			return matches;
 		}
 
 		/// <summary>
@@ -123,8 +160,18 @@ namespace RatEye.Processing
 		/// <returns>A rescaled and alpha blended version of <see cref="Config.Processing.Inspection.Marker"/></returns>
 		private Bitmap GetScaledMarker()
 		{
-			var output = InspectionConfig.Marker.Rescale(InspectionConfig.MarkerItemScale * ProcessingConfig.Scale);
-			return output.TransparentToColor(InspectionConfig.MarkerBackgroundColor);
+			Bitmap output = InspectionConfig.Marker.Rescale(
+				InspectionConfig.MarkerItemScale * ProcessingConfig.Scale
+			);
+			try
+			{
+				return output.TransparentToColor(InspectionConfig.MarkerBackgroundColor);
+			}
+			finally
+			{
+				if (!ReferenceEquals(output, InspectionConfig.Marker))
+					output.Dispose();
+			}
 		}
 	}
 }
