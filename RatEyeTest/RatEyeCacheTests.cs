@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using OpenCvSharp;
 using RatEye;
 using RatStash;
@@ -219,6 +220,43 @@ public class RatEyeCacheTests
 		}
 	}
 
+	[Fact]
+	public void Static_icon_changes_replace_and_remove_loaded_templates()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-refresh-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		string iconPath = Path.Combine(iconsDirectory, "one.png");
+		Directory.CreateDirectory(iconsDirectory);
+		WriteIcon(iconPath);
+
+		Config config = CreateConfig(iconsDirectory);
+		try
+		{
+			using IconManager manager = new(config, Path.Combine(root, "cache"));
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Mat original = manager.StaticIcons[new Vector2(1, 1)].Values.Single();
+
+			WriteIcon(iconPath, color: System.Drawing.Color.Red);
+			File.SetLastWriteTimeUtc(iconPath, DateTime.UtcNow.AddSeconds(2));
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Mat replacement = manager.StaticIcons[new Vector2(1, 1)].Values.Single();
+
+			Assert.NotSame(original, replacement);
+
+			File.Delete(iconPath);
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Assert.Empty(manager.StaticIcons);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
 	private static Config CreateConfig(
 		string iconsDirectory,
 		TaxonomyColor backgroundColor = TaxonomyColor.Default
@@ -250,12 +288,17 @@ public class RatEyeCacheTests
 		return config;
 	}
 
-	private static void WriteIcon(string path, int width = 64, int height = 64)
+	private static void WriteIcon(
+		string path,
+		int width = 64,
+		int height = 64,
+		System.Drawing.Color? color = null
+	)
 	{
 		using Bitmap bitmap = new(width, height);
 		using (Graphics graphics = Graphics.FromImage(bitmap))
 		{
-			using Brush brush = new SolidBrush(System.Drawing.Color.White);
+			using Brush brush = new SolidBrush(color ?? System.Drawing.Color.White);
 			graphics.FillEllipse(brush, width / 4, height / 4, width / 2, height / 2);
 		}
 		bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);

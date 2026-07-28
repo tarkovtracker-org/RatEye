@@ -119,6 +119,7 @@ namespace RatEye
                         )
                     )
                     {
+                        ClearStaticIcons();
                         _loadedStaticIconSizes.Clear();
                         _staticIconDirectoryFingerprint = directoryFingerprint;
                     }
@@ -779,11 +780,8 @@ namespace RatEye
                 == new Vector2(item.GetSlotSize());
         }
 
-        public void Dispose()
+        private void ClearStaticIcons()
         {
-            if (_disposed)
-                return;
-
             StaticIconsLock.EnterWriteLock();
             try
             {
@@ -795,6 +793,14 @@ namespace RatEye
             {
                 StaticIconsLock.ExitWriteLock();
             }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            ClearStaticIcons();
 
             StaticIconsLock.Dispose();
             _staticCorrelationDataLock.Dispose();
