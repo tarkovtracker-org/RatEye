@@ -55,6 +55,7 @@ namespace RatEye
 
         private readonly object _staticIconLoadLock = new();
         private readonly HashSet<Vector2> _loadedStaticIconSizes = new();
+        private string _staticIconDirectoryFingerprint;
         internal IReadOnlyList<(Item Item, string NormalizedName)> NormalizedItems { get; }
         private bool _disposed;
 
@@ -104,17 +105,30 @@ namespace RatEye
         {
             lock (_staticIconLoadLock)
             {
-                if (_loadedStaticIconSizes.Contains(slotSize))
-                    return;
-
-                if (Directory.Exists(_config.PathConfig.StaticIcons))
-                    LoadStaticCorrelationData();
                 Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
                 try
                 {
+                    string directoryFingerprint = GetStaticIconDirectoryFingerprint(
+                        _config.PathConfig.StaticIcons
+                    );
+                    if (
+                        !string.Equals(
+                            _staticIconDirectoryFingerprint,
+                            directoryFingerprint,
+                            StringComparison.Ordinal
+                        )
+                    )
+                    {
+                        _loadedStaticIconSizes.Clear();
+                        _staticIconDirectoryFingerprint = directoryFingerprint;
+                    }
+                    if (_loadedStaticIconSizes.Contains(slotSize))
+                        return;
+
+                    LoadStaticCorrelationData();
                     newIcons = LoadNewIcons(_config.PathConfig.StaticIcons, slotSize);
                 }
-                catch (Exception e) when (e is DirectoryNotFoundException or FileNotFoundException)
+                catch (Exception e) when (IsRecoverableFileSystemException(e))
                 {
                     // Missing Data/icons is a recoverable packaging issue; keep scanning alive.
                     Logger.LogDebug(
@@ -142,6 +156,26 @@ namespace RatEye
                     StaticIconsLock.ExitWriteLock();
                 }
             }
+        }
+
+        private static string GetStaticIconDirectoryFingerprint(string directory)
+        {
+            if (!Directory.Exists(directory))
+                throw new DirectoryNotFoundException(directory);
+
+            return string
+                .Join(
+                    "|",
+                    Directory
+                        .GetFiles(directory, "*.png")
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .Select(path =>
+                        {
+                            var file = new FileInfo(path);
+                            return $"{file.Name}:{file.Length}:{file.LastWriteTimeUtc.Ticks}";
+                        })
+                )
+                .SHA256Hash();
         }
 
         private Dictionary<Vector2, Dictionary<string, Mat>> LoadNewIcons(

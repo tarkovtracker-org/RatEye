@@ -172,6 +172,9 @@ public class RatEyeCacheTests
 		{
 			using IconManager manager = new(config, Path.Combine(root, "cache"));
 			Directory.CreateDirectory(iconsDirectory);
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Assert.Empty(manager.StaticIcons);
+
 			WriteIcon(Path.Combine(iconsDirectory, "one.png"));
 
 			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
