@@ -436,6 +436,22 @@ public class ProcessingRegressionTests
 		Assert.Null(config.IconManager);
 	}
 
+	[Fact]
+	public void Engine_cleanup_failures_are_observable_without_throwing_from_normal_dispose()
+	{
+		Config config = new();
+		RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		config.IconManager.StaticIconsLock.Dispose();
+
+		engine.Dispose();
+
+		AggregateException failure = Assert.IsType<AggregateException>(
+			engine.CleanupFailure
+		);
+		Assert.Contains(failure.InnerExceptions, error => error is ObjectDisposedException);
+		Assert.Same(failure, Assert.Throws<AggregateException>(engine.DisposeStrict));
+	}
+
 	private static Bitmap CreateMarker()
 	{
 		Bitmap marker = new(9, 9);

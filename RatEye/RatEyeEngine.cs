@@ -111,12 +111,32 @@ namespace RatEye
 		/// its icon manager, Tesseract engines, and inspection marker. Complete
 		/// all work on returned processing objects before disposing the engine.
 		/// </remarks>
-		public void Dispose()
+		public void Dispose() => DisposeCore(throwOnFailure: false);
+
+		/// <summary>
+		/// Releases processing resources and throws if any cleanup operation fails.
+		/// </summary>
+		/// <remarks>
+		/// Prefer normal <see cref="Dispose"/> for using blocks so a cleanup failure cannot mask
+		/// an active processing exception. Call this method when explicit teardown must fail fast.
+		/// </remarks>
+		public void DisposeStrict() => DisposeCore(throwOnFailure: true);
+
+		/// <summary>
+		/// Gets the aggregate failure from the cleanup attempt, if any.
+		/// </summary>
+		public AggregateException CleanupFailure { get; private set; }
+
+		private void DisposeCore(bool throwOnFailure)
 		{
 			lock (_lifecycleSync)
 			{
 				if (_disposed)
+				{
+					if (throwOnFailure && CleanupFailure != null)
+						throw CleanupFailure;
 					return;
+				}
 				_disposed = true;
 
 				List<Exception> cleanupErrors = new List<Exception>();
@@ -176,17 +196,24 @@ namespace RatEye
 
 				if (cleanupErrors.Count > 0)
 				{
+					CleanupFailure = new AggregateException(
+						"One or more RatEye resources could not be released.",
+						cleanupErrors
+					);
 					try
 					{
 						Logger.LogDebug(
 							"One or more RatEye resources could not be released.",
-							new AggregateException(cleanupErrors)
+							CleanupFailure
 						);
 					}
 					catch
 					{
 						// Dispose is best effort and must not mask an active processing exception.
 					}
+
+					if (throwOnFailure)
+						throw CleanupFailure;
 				}
 			}
 		}
