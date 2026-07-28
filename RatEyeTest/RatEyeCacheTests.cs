@@ -275,6 +275,50 @@ public class RatEyeCacheTests
 	}
 
 	[Fact]
+	public void Constructor_failure_disposes_started_static_icon_watcher()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-watcher-constructor-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		string watcherDirectory = Path.Combine(root, "watcher");
+		Directory.CreateDirectory(iconsDirectory);
+		Directory.CreateDirectory(watcherDirectory);
+		WriteIcon(Path.Combine(iconsDirectory, "one.png"));
+		Config config = CreateConfig(iconsDirectory);
+		TrackingFileSystemWatcher watcher = null;
+
+		try
+		{
+			Assert.Throws<DirectoryNotFoundException>(
+				() =>
+					new IconManager(
+						config,
+						Path.Combine(root, "cache"),
+						path =>
+						{
+							watcher = new TrackingFileSystemWatcher(
+								watcherDirectory,
+								"*.png"
+							);
+							Directory.Delete(path, recursive: true);
+							return watcher;
+						}
+					)
+			);
+
+			Assert.NotNull(watcher);
+			Assert.True(watcher.IsDisposed);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
 	public void Cache_identity_includes_catalog_rendering_properties()
 	{
 		string root = Path.Combine(
@@ -630,5 +674,18 @@ public class RatEyeCacheTests
 		File.WriteAllBytes(path, new byte[length]);
 		File.SetLastWriteTimeUtc(path, lastWriteTimeUtc);
 		return path;
+	}
+
+	private sealed class TrackingFileSystemWatcher(string path, string filter)
+		: FileSystemWatcher(path, filter)
+	{
+		public bool IsDisposed { get; private set; }
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing)
+				IsDisposed = true;
+			base.Dispose(disposing);
+		}
 	}
 }

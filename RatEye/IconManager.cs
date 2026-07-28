@@ -113,8 +113,16 @@ namespace RatEye
             {
                 if (Directory.Exists(_config.PathConfig.StaticIcons))
                 {
-                    EnsureStaticIconSourceWatcher();
-                    ReplaceStaticCorrelationData(BuildStaticCorrelationData());
+                    try
+                    {
+                        EnsureStaticIconSourceWatcher();
+                        ReplaceStaticCorrelationData(BuildStaticCorrelationData());
+                    }
+                    catch
+                    {
+                        DisposeStaticIconSourceWatcher();
+                        throw;
+                    }
                 }
                 else
                 {
@@ -358,6 +366,15 @@ namespace RatEye
                 _staticIconSourceWatcher = null;
                 _staticIconSourceWatcherUnavailable = false;
                 _nextStaticIconSourceWatcherRetryUtc = DateTime.MinValue;
+            }
+        }
+
+        private void DisposeStaticIconSourceWatcher()
+        {
+            lock (_staticIconSourceWatcherLock)
+            {
+                _staticIconSourceWatcher?.Dispose();
+                _staticIconSourceWatcher = null;
             }
         }
 
@@ -1094,11 +1111,7 @@ namespace RatEye
             if (_disposed)
                 return;
 
-            lock (_staticIconSourceWatcherLock)
-            {
-                _staticIconSourceWatcher?.Dispose();
-                _staticIconSourceWatcher = null;
-            }
+            DisposeStaticIconSourceWatcher();
             ClearStaticIcons();
 
             StaticIconsLock.Dispose();
