@@ -175,10 +175,19 @@ namespace RatEye
 				GC.SuppressFinalize(this);
 
 				if (cleanupErrors.Count > 0)
-					throw new AggregateException(
-						"One or more RatEye resources could not be released.",
-						cleanupErrors
-					);
+				{
+					try
+					{
+						Logger.LogDebug(
+							"One or more RatEye resources could not be released.",
+							new AggregateException(cleanupErrors)
+						);
+					}
+					catch
+					{
+						// Dispose is best effort and must not mask an active processing exception.
+					}
+				}
 			}
 		}
 

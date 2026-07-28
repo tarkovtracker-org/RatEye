@@ -143,7 +143,6 @@ namespace RatEye
                     newIcons = LoadNewIcons(
                         _config.PathConfig.StaticIcons,
                         slotSize,
-                        sourceHashes,
                         newCorrelationData,
                         skipExistingIcons: !replaceExistingIcons
                     );
@@ -264,10 +263,15 @@ namespace RatEye
             return string.Concat(sha256.ComputeHash(stream).Select(value => value.ToString("X2")));
         }
 
+        private static string GetContentHash(byte[] content)
+        {
+            using SHA256 sha256 = SHA256.Create();
+            return string.Concat(sha256.ComputeHash(content).Select(value => value.ToString("X2")));
+        }
+
         private Dictionary<Vector2, Dictionary<string, Mat>> LoadNewIcons(
             string folderPath,
             Vector2 slotSizeFilter = null,
-            IReadOnlyDictionary<string, string> sourceHashes = null,
             IReadOnlyDictionary<string, Item> correlationData = null,
             bool skipExistingIcons = true
         )
@@ -311,12 +315,9 @@ namespace RatEye
                                 )
                                     return;
 
+                                byte[] sourceBytes = File.ReadAllBytes(iconPath);
+                                string sourceHash = GetContentHash(sourceBytes);
                                 var useCache = _config.ProcessingConfig.UseCache;
-                                string sourceHash =
-                                    sourceHashes != null
-                                    && sourceHashes.TryGetValue(iconPath, out string snapshotHash)
-                                        ? snapshotHash
-                                        : GetFileContentHash(iconPath);
                                 var cacheIdentity =
                                     $"{iconKey}|{sourceHash}"
                                     + $"|{item.GetType().FullName}|{item.BackgroundColor}";
@@ -341,7 +342,10 @@ namespace RatEye
 
                                 if (!cacheHit)
                                 {
-                                    using var mat = Cv2.ImRead(iconPath, ImreadModes.Unchanged);
+                                    using var mat = Cv2.ImDecode(
+                                        sourceBytes,
+                                        ImreadModes.Unchanged
+                                    );
                                     if (mat.Empty())
                                         throw new InvalidDataException("The icon image is empty or unreadable.");
                                     if (!HasVisibleIconContent(mat))
