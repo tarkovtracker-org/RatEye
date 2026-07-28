@@ -278,25 +278,6 @@ public class ProcessingRegressionTests
 	}
 
 	[Fact]
-	public void Config_hash_is_stable_across_current_cultures()
-	{
-		CultureInfo original = CultureInfo.CurrentCulture;
-		try
-		{
-			Config config = new();
-			CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
-			string englishHash = config.GetHash();
-			CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
-
-			Assert.Equal(englishHash, config.GetHash());
-		}
-		finally
-		{
-			CultureInfo.CurrentCulture = original;
-		}
-	}
-
-	[Fact]
 	public void Concurrent_debug_bitmap_writes_allocate_unique_files()
 	{
 		string root = Path.Combine(
@@ -464,3 +445,29 @@ public class ProcessingRegressionTests
 		return marker;
 	}
 }
+
+[Collection(nameof(GlobalConfigStateCollection))]
+public class GlobalConfigStateTests
+{
+	[Fact]
+	public void Config_hash_is_stable_across_current_cultures()
+	{
+		CultureInfo original = CultureInfo.CurrentCulture;
+		try
+		{
+			Config config = new();
+			CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
+			string englishHash = config.GetHash();
+			CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+
+			Assert.Equal(englishHash, config.GetHash());
+		}
+		finally
+		{
+			CultureInfo.CurrentCulture = original;
+		}
+	}
+}
+
+[CollectionDefinition(nameof(GlobalConfigStateCollection), DisableParallelization = true)]
+public sealed class GlobalConfigStateCollection;
