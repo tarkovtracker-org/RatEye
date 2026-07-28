@@ -11,19 +11,21 @@
 		<PackageProjectUrl>https://ratscanner.com/</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/RatScanner/RatEye.git</RepositoryUrl>
 		<PackageIcon>RatLogo.png</PackageIcon>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<RepositoryType>git</RepositoryType>
 	</PropertyGroup>
 
 	<PropertyGroup>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);1591</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-		<PackageReference Include="OpenCvSharp4.Extensions" Version="4.9.0.20240103" />
-		<PackageReference Include="OpenCvSharp4.Windows" Version="4.9.0.20240103" />
-		<PackageReference Include="RatStash" Version="5.1.1" />
-		<PackageReference Include="System.Drawing.Common" Version="7.0.0" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+		<PackageReference Include="OpenCvSharp4.Extensions" Version="4.13.0.20260627" />
+		<PackageReference Include="OpenCvSharp4.Windows" Version="4.13.0.20260627" />
+		<PackageReference Include="RatStash" Version="6.0.0" />
+		<PackageReference Include="System.Drawing.Common" Version="10.0.9" />
 		<PackageReference Include="Tesseract" Version="5.2.0" />
 		<PackageReference Include="Tesseract.Drawing" Version="5.2.0" />
 	</ItemGroup>
@@ -45,5 +47,6 @@
 
 	<ItemGroup>
 		<None Include="RatLogo.png" Pack="true" PackagePath="" />
+		<None Include="..\README.md" Pack="true" PackagePath="" Link="README.md" />
 	</ItemGroup>
 </Project>

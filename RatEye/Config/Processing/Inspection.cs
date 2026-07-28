@@ -1,4 +1,5 @@
 ﻿using System.Drawing;
+using System.Globalization;
 using System.IO;
 using RatEye.Properties;
 using Tesseract;
@@ -15,9 +16,10 @@ namespace RatEye
 			public class Inspection
 			{
 				/// <summary>
-				/// Marker bitmap to identify regions of interest. This should be a cropped image of the magnifier icon
+				/// Marker bitmap to identify regions of interest. This should be a cropped image of the magnifier icon.
 				/// </summary>
-				public Bitmap Marker = new Bitmap(new MemoryStream(Resources.icon_search));
+				public Bitmap Marker = LoadMarker();
+				internal readonly object MarkerSync = new();
 
 				/// <summary>
 				/// Detection threshold of the marker bitmap
@@ -25,9 +27,19 @@ namespace RatEye
 				public float MarkerThreshold = 0.82f;
 
 				/// <summary>
+				/// Minimum OCR-to-item-name similarity required to accept a match.
+				/// <para>
+				/// Prevents weak fuzzy matches from inventory chrome (for example the
+				/// "Subject Search" bar, whose magnifier resembles the inspect marker)
+				/// from being reported as items.
+				/// </para>
+				/// </summary>
+				public float MinItemConfidence = 0.55f;
+
+				/// <summary>
 				/// The scale of the marker used by item inspection windows
 				/// </summary>
-				public float MarkerItemScale = 16f / 21f;
+				public float MarkerItemScale = 16f / 28f;
 
 				/// <summary>
 				/// The background color used for the marker if it uses a alpha channel
@@ -77,23 +89,62 @@ namespace RatEye
 				/// Tesseract Engine instance used and set by <see cref="RatEye.Processing.Inspection"/>
 				/// </summary>
 				internal TesseractEngine TesseractEngine;
+				internal readonly object TesseractSync = new();
+				internal bool TesseractReleased;
 
 				/// <summary>
 				/// Create a new inspection config instance
 				/// </summary>
 				public Inspection() { }
 
+				private static Bitmap LoadMarker()
+				{
+					using var stream = new MemoryStream(Resources.icon_search);
+					using var marker = new Bitmap(stream);
+					return new Bitmap(marker);
+				}
+
+				internal bool IsMarkerLoaded
+				{
+					get
+					{
+						lock (MarkerSync)
+						{
+							return Marker != null;
+						}
+					}
+				}
+
+				internal Bitmap CloneMarker()
+				{
+					lock (MarkerSync)
+					{
+						Marker ??= LoadMarker();
+						return new Bitmap(Marker);
+					}
+				}
+
+				internal void DisposeMarker()
+				{
+					lock (MarkerSync)
+					{
+						Marker?.Dispose();
+						Marker = null;
+					}
+				}
+
 				internal string GetHash()
 				{
 					var components = new string[]
 					{
-						MarkerThreshold.ToString(),
-						MarkerItemScale.ToString(),
+						MarkerThreshold.ToString(CultureInfo.InvariantCulture),
+						MinItemConfidence.ToString(CultureInfo.InvariantCulture),
+						MarkerItemScale.ToString(CultureInfo.InvariantCulture),
 						MarkerBackgroundColor.ToString(),
-						BaseTitleSearchWidth.ToString(),
-						BaseTitleSearchHeight.ToString(),
-						BaseTitleSearchRightPadding.ToString(),
-						HorizontalTitleSearchOffsetFactor.ToString(),
+						BaseTitleSearchWidth.ToString(CultureInfo.InvariantCulture),
+						BaseTitleSearchHeight.ToString(CultureInfo.InvariantCulture),
+						BaseTitleSearchRightPadding.ToString(CultureInfo.InvariantCulture),
+						HorizontalTitleSearchOffsetFactor.ToString(CultureInfo.InvariantCulture),
 						CloseButtonColorLowerBound.ToString(),
 						CloseButtonColorUpperBound.ToString(),
 					};

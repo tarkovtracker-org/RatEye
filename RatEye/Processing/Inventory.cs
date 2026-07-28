@@ -9,14 +9,21 @@ namespace RatEye.Processing
 	/// <summary>
 	/// Represents a grid style inventory which can contain multiple <see cref="RatEye.Processing.Icon"/>
 	/// </summary>
-	public class Inventory
+	public class Inventory : IDisposable
 	{
 		private readonly Config _config;
 		private readonly Mat _image;
+		private Mat _normalGridMask;
 		private Mat _grid;
 		private Mat _vertGrid;
 		private List<Rect> _boundingBoxes = new();
 		private List<Icon> _icons = new();
+		private bool _disposed;
+
+		/// <summary>
+		/// Elapsed processing time recorded for this inventory.
+		/// </summary>
+		public ProcessingTimings Timings { get; } = new ProcessingTimings();
 
 		private Config.Processing ProcessingConfig => _config.ProcessingConfig;
 
@@ -76,24 +83,35 @@ namespace RatEye.Processing
 
 		private void DetectInventoryGrid()
 		{
-			if (_config.ProcessingConfig.InventoryConfig.OptimizeHighlighted) DetectInventoryGridHighlighted();
-			else DetectInventoryGridNormal();
+			long started = ProcessingTimings.Start();
+			if (_config.ProcessingConfig.InventoryConfig.OptimizeHighlighted)
+				DetectInventoryGridHighlighted();
+			else
+				DetectInventoryGridNormal();
+			Timings.RecordSince("inventory.grid_detect", started);
 		}
 
 		private void DetectInventoryGridHighlighted()
 		{
-			var minBackgroundColor = _config.ProcessingConfig.InventoryConfig.MinHighlightingColor;
-			var maxBackgroundColor = _config.ProcessingConfig.InventoryConfig.MaxHighlightingColor;
-			var minBackgroundScalar = new Scalar(minBackgroundColor.hue, minBackgroundColor.saturation, minBackgroundColor.value);
-			var maxBackgroundScalar = new Scalar(maxBackgroundColor.hue, maxBackgroundColor.saturation, maxBackgroundColor.value);
+			var (minHue, minSaturation, minValue) = _config
+				.ProcessingConfig
+				.InventoryConfig
+				.MinHighlightingColor;
+			var (maxHue, maxSaturation, maxValue) = _config
+				.ProcessingConfig
+				.InventoryConfig
+				.MaxHighlightingColor;
+			var minBackgroundScalar = new Scalar(minHue, minSaturation, minValue);
+			var maxBackgroundScalar = new Scalar(maxHue, maxSaturation, maxValue);
 			using var hsv = _image.CvtColor(ColorConversionCodes.BGR2HSV_FULL);
 			var colorFilter = hsv.InRange(minBackgroundScalar, maxBackgroundScalar);
 			Logger.LogDebugMat(colorFilter, "inventory/colorFilter");
 
 			var scale = _config.ProcessingConfig.Scale;
 
-			using var hStructure = Mat.Ones(MatType.CV_8U, new[] { 1, (int)(2 * scale) }).ToMat();
-			using var vStructure = Mat.Ones(MatType.CV_8U, new[] { (int)(2 * scale), 1 }).ToMat();
+			int structureSize = Math.Max(1, (int)(2 * scale));
+			using var hStructure = new Mat(1, structureSize, MatType.CV_8U, Scalar.All(1));
+			using var vStructure = new Mat(structureSize, 1, MatType.CV_8U, Scalar.All(1));
 
 			Cv2.Dilate(colorFilter, colorFilter, hStructure, null, 1);
 			Cv2.Dilate(colorFilter, colorFilter, vStructure, null, 1);
@@ -104,31 +122,39 @@ namespace RatEye.Processing
 
 		private void DetectInventoryGridNormal()
 		{
-			var minGridColor = _config.ProcessingConfig.InventoryConfig.MinGridColor;
-			var maxGridColor = _config.ProcessingConfig.InventoryConfig.MaxGridColor;
-			var minGridScalar = new Scalar(minGridColor.hue, minGridColor.saturation, minGridColor.value);
-			var maxGridScalar = new Scalar(maxGridColor.hue, maxGridColor.saturation, maxGridColor.value);
+			var (minHue, minSaturation, minValue) = _config
+				.ProcessingConfig
+				.InventoryConfig
+				.MinGridColor;
+			var (maxHue, maxSaturation, maxValue) = _config
+				.ProcessingConfig
+				.InventoryConfig
+				.MaxGridColor;
+			var minGridScalar = new Scalar(minHue, minSaturation, minValue);
+			var maxGridScalar = new Scalar(maxHue, maxSaturation, maxValue);
 			using var hsv = _image.CvtColor(ColorConversionCodes.BGR2HSV_FULL);
 			using var colorFilter = hsv.InRange(minGridScalar, maxGridScalar);
-
+			_normalGridMask = colorFilter.Clone();
 
 			Logger.LogDebugMat(colorFilter, "inventory/colorFilter");
 
 			// Extract vertical and horizontal lines
 			var scaledSlotSize = (int)ProcessingConfig.ScaledSlotSize;
 			var size = scaledSlotSize - (scaledSlotSize % 2) + 1;
-			using var lineStructure = Mat.Ones(MatType.CV_8U, new[] { size, 1 });
+			using var lineStructure = new Mat(size, 1, MatType.CV_8U, Scalar.All(1));
+			using var horizontalLineStructure = new Mat(1, size, MatType.CV_8U, Scalar.All(1));
 			var verticalLines = colorFilter.Erode(lineStructure);
 			Cv2.Dilate(verticalLines, verticalLines, lineStructure);
-			using var horizontalLines = colorFilter.Erode(lineStructure.T());
-			Cv2.Dilate(horizontalLines, horizontalLines, lineStructure.T());
+			using var horizontalLines = colorFilter.Erode(horizontalLineStructure);
+			Cv2.Dilate(horizontalLines, horizontalLines, horizontalLineStructure);
 
 			SmoothJaggedLines(verticalLines, false);
 			SmoothJaggedLines(horizontalLines, true);
 
 			var grid = CombineWithoutPeeks(verticalLines, horizontalLines);
-			Cv2.Dilate(grid, grid, Mat.Ones(2, 2));
-			Cv2.Erode(grid, grid, Mat.Ones(2, 2));
+			using var closeStructure = new Mat(2, 2, MatType.CV_8U, Scalar.All(1));
+			Cv2.Dilate(grid, grid, closeStructure);
+			Cv2.Erode(grid, grid, closeStructure);
 
 			_grid = grid;
 			_vertGrid = verticalLines;
@@ -136,33 +162,44 @@ namespace RatEye.Processing
 
 		private void ParseInventoryGrid()
 		{
-			if (_config.ProcessingConfig.InventoryConfig.OptimizeHighlighted) ParseInventoryGridHighlighted();
-			else ParseInventoryGridNormal();
+			long started = ProcessingTimings.Start();
+			if (_config.ProcessingConfig.InventoryConfig.OptimizeHighlighted)
+				ParseInventoryGridHighlighted();
+			else
+				ParseInventoryGridNormal();
+			Timings.RecordSince("inventory.grid_parse", started);
 		}
 
 		private void ParseInventoryGridHighlighted()
 		{
-			var contours = _grid.FindContoursAsArray(RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+			var contours = _grid.FindContoursAsArray(
+				RetrievalModes.External,
+				ContourApproximationModes.ApproxSimple
+			);
 
 			using var debugMat = _image.Clone();
-			if (Config.LogDebug) Cv2.DrawContours(debugMat, contours, -1, new(255, 0, 0));
+			if (Config.LogDebug)
+				Cv2.DrawContours(debugMat, contours, -1, new(255, 0, 0));
 
 			var boundingBoxes = contours.Select(Cv2.BoundingRect).ToList();
-			if (Config.LogDebug) boundingBoxes.ForEach(b => debugMat.Rectangle(b, new(0, 255, 0)));
+			if (Config.LogDebug)
+				boundingBoxes.ForEach(b => debugMat.Rectangle(b, new(0, 255, 0)));
 
 			// Merge overlapping bounding boxes
 			for (var b = 0; b < boundingBoxes.Count; b++)
 			{
 				for (var i = b + 1; i < boundingBoxes.Count; i++)
 				{
-					if (!boundingBoxes[b].IntersectsWith(boundingBoxes[i])) continue;
+					if (!boundingBoxes[b].IntersectsWith(boundingBoxes[i]))
+						continue;
 					boundingBoxes[b] = boundingBoxes[b].Union(boundingBoxes[i]);
 					boundingBoxes.RemoveAt(i);
 					i = b;
 				}
 			}
 
-			if (Config.LogDebug) boundingBoxes.ForEach(b => debugMat.Rectangle(b, new(0, 0, 255)));
+			if (Config.LogDebug)
+				boundingBoxes.ForEach(b => debugMat.Rectangle(b, new(0, 0, 255)));
 			Logger.LogDebugMat(debugMat, "inventory/boundingBoxes");
 
 			_boundingBoxes = boundingBoxes;
@@ -177,23 +214,40 @@ namespace RatEye.Processing
 		/// </summary>
 		private void ParseInventoryGridNormal()
 		{
-			var gridIndexer = _grid.GetGenericIndexer<byte>();
-			var vertGrindIndexer = _vertGrid.GetGenericIndexer<byte>();
-
+			var gridIndexer = GetByteGridIndexer(_grid, nameof(_grid));
+			var vertGridIndexer = GetByteGridIndexer(_vertGrid, nameof(_vertGrid));
+			using var image = _image.ToBitmap();
 			var scaledSlotSize = (int)(_config.ProcessingConfig.ScaledSlotSize);
+			if (scaledSlotSize < 2)
+			{
+				throw new InvalidOperationException(
+					"The scaled inventory slot size must be at least two pixels for grid parsing."
+				);
+			}
 
 			var maxRows = _vertGrid.Rows;
-			var maxCols = _vertGrid.Cols - scaledSlotSize / 2;
+			var vertGridCols = _vertGrid.Cols;
+			var gridRows = _grid.Rows;
+			var gridCols = _grid.Cols;
+			if (gridRows != maxRows || gridCols != vertGridCols)
+				throw new InvalidOperationException(
+					"Inventory grid matrices must have matching dimensions."
+				);
+
+			var maxCols = vertGridCols - scaledSlotSize / 2;
 
 			for (var y = scaledSlotSize / 2; y < maxRows; y += scaledSlotSize)
 			{
 				for (var x = 0; x < maxCols; x++)
 				{
-					if (!vertGrindIndexer[y, x].Equals(0xFF)) continue;
+					if (vertGridIndexer[y, x] != 0xFF)
+						continue;
 
-					TryAddIcon(gridIndexer, x, y);
+					TryAddIcon(image, gridIndexer, gridRows, gridCols, x, y);
 				}
 			}
+
+			AddContourIconsFromNormalGrid(image);
 
 			// Quarter of the normal sized slot
 			var overlapThreshold = scaledSlotSize / 2;
@@ -206,25 +260,99 @@ namespace RatEye.Processing
 				for (var j = _icons.Count - 1; j >= 0; j--)
 				{
 					// Skip if comparing to itself
-					if (i == j) continue;
+					if (i == j)
+						continue;
 
 					var iconB = _icons[j];
 
 					// Only remove icon A from the list if it is bigger then the compare to icon
-					if (iconA.Size.Area < iconB.Size.Area) continue;
+					if (iconA.Size.Area < iconB.Size.Area)
+						continue;
 
 					var iconBRect = new Rect(iconB.Position, iconB.Size);
 
 					var overlapRect = iconARect.Intersect(iconBRect);
 
 					// Remove icon A from the icons and continue to the next one
-					if (overlapRect.Width > overlapThreshold && overlapRect.Height > overlapThreshold)
+					if (
+						overlapRect.Width > overlapThreshold
+						&& overlapRect.Height > overlapThreshold
+					)
 					{
+						iconA.Dispose();
 						_icons.RemoveAt(i);
 						break;
 					}
 				}
 			}
+		}
+
+		private void AddContourIconsFromNormalGrid(System.Drawing.Bitmap image)
+		{
+			if (_normalGridMask == null || _normalGridMask.Empty())
+				return;
+
+			using var contourSource = _normalGridMask.Clone();
+			var contours = contourSource.FindContoursAsArray(
+				RetrievalModes.List,
+				ContourApproximationModes.ApproxSimple
+			);
+			var scaledSlotSize = (int)ProcessingConfig.ScaledSlotSize;
+			var tolerance = Math.Max(3, (int)Math.Ceiling(scaledSlotSize * 0.08));
+			var imageBounds = new Rect(0, 0, _image.Width, _image.Height);
+
+			foreach (var contour in contours)
+			{
+				var rect = Cv2.BoundingRect(contour);
+				if (
+					!IsSlotAlignedDimension(rect.Width, scaledSlotSize, tolerance)
+					|| !IsSlotAlignedDimension(rect.Height, scaledSlotSize, tolerance)
+				)
+					continue;
+
+				var scaledSlotSizeVec = new Vector2(scaledSlotSize, scaledSlotSize);
+				var topLeft = new Vector2(rect.Location) - scaledSlotSizeVec / 8;
+				var size = new Vector2(rect.Size) + scaledSlotSizeVec / 4;
+				var paddedRect = new Rect(topLeft, size).Intersect(imageBounds);
+				if (paddedRect.Width <= 0 || paddedRect.Height <= 0)
+					continue;
+
+				topLeft = new Vector2(paddedRect.Location);
+				size = new Vector2(paddedRect.Size);
+				if (_icons.Any(icon => icon.Position == topLeft && icon.Size == size))
+					continue;
+
+				var iconImage = image.Crop(topLeft.X, topLeft.Y, size.X, size.Y);
+				_icons.Add(new Icon(iconImage, topLeft, size, _config, ownsIcon: true));
+			}
+		}
+
+		private static bool IsSlotAlignedDimension(int pixels, int slotSize, int tolerance)
+		{
+			if (pixels < slotSize - tolerance)
+				return false;
+
+			var slots = Math.Max(1, (int)Math.Round(pixels / (double)slotSize));
+			return Math.Abs(pixels - slots * slotSize) <= tolerance;
+		}
+
+		/// <summary>
+		/// Creates the stride-aware fast indexer used by the grid hot path.
+		/// </summary>
+		/// <remarks>
+		/// OpenCvSharp's unsafe indexer skips per-access type and bounds checks, but retains the matrix row steps so it also
+		/// works for non-contiguous submatrices. Validate the matrix contract once before entering the pixel loops.
+		/// </remarks>
+		private static Mat.UnsafeIndexer<byte> GetByteGridIndexer(Mat mat, string name)
+		{
+			if (mat.Empty() || mat.Dims != 2 || mat.Type() != MatType.CV_8UC1)
+			{
+				throw new InvalidOperationException(
+					$"Inventory {name} must be a non-empty two-dimensional CV_8UC1 matrix."
+				);
+			}
+
+			return mat.GetUnsafeGenericIndexer<byte>();
 		}
 
 		private void SmoothJaggedLines(Mat mat, bool horizontal)
@@ -235,10 +363,20 @@ namespace RatEye.Processing
 			var size = (int)(ProcessingConfig.ScaledSlotSize * 2);
 			size = size - (size % 2) + 1;
 			var extendStructureSize = horizontal ? new[] { 1, size } : new[] { size, 1 };
-			using var extendStructure = Mat.Ones(MatType.CV_8U, extendStructureSize).ToMat();
+			using var extendStructure = new Mat(
+				extendStructureSize[0],
+				extendStructureSize[1],
+				MatType.CV_8U,
+				Scalar.All(1)
+			);
 
 			var thickenStructureSize = horizontal ? new[] { 3, 1 } : new[] { 1, 3 };
-			using var thickenStructure = Mat.Ones(MatType.CV_8U, thickenStructureSize).ToMat();
+			using var thickenStructure = new Mat(
+				thickenStructureSize[0],
+				thickenStructureSize[1],
+				MatType.CV_8U,
+				Scalar.All(1)
+			);
 
 			Cv2.Dilate(mat, extendedLines, extendStructure, null, 10);
 			Cv2.Dilate(mat, thickenedLines, thickenStructure);
@@ -259,11 +397,11 @@ namespace RatEye.Processing
 			var scaledSlotSize = (int)(ProcessingConfig.ScaledSlotSize / 2);
 			var size = scaledSlotSize - (scaledSlotSize % 2) + 1;
 
-			using var vStructure = Mat.Ones(MatType.CV_8U, new[] { size, 1 }).ToMat();
+			using var vStructure = new Mat(size, 1, MatType.CV_8U, Scalar.All(1));
 			Cv2.Erode(vLinesWithHoles, vLinesWithHoles, vStructure);
 			Cv2.Dilate(vLinesWithHoles, vLinesWithHoles, vStructure);
 
-			using var hStructure = Mat.Ones(MatType.CV_8U, new[] { 1, size }).ToMat();
+			using var hStructure = new Mat(1, size, MatType.CV_8U, Scalar.All(1));
 			Cv2.Erode(hLinesWithHoles, hLinesWithHoles, hStructure);
 			Cv2.Dilate(hLinesWithHoles, hLinesWithHoles, hStructure);
 
@@ -276,11 +414,21 @@ namespace RatEye.Processing
 		/// <summary>
 		/// If the position at the indexer is part of a rectangle, it will be added to <see cref="_icons"/>
 		/// </summary>
-		/// <param name="indexer">The indexer of the mat</param>
+		/// <param name="image">Bitmap source used to crop accepted icons</param>
+		/// <param name="indexer">Stride-aware byte indexer of the binary grid mat</param>
+		/// <param name="rows">Number of rows in the grid</param>
+		/// <param name="cols">Number of columns in the grid</param>
 		/// <param name="x">X position of the assumed icon</param>
 		/// <param name="y">Y position of the assumed icon</param>
 		/// <returns><see langword="true"/> if it is a valid icon, else <see langword="false"/></returns>
-		private bool TryAddIcon(Mat.Indexer<byte> indexer, int x, int y)
+		private bool TryAddIcon(
+			System.Drawing.Bitmap image,
+			Mat.UnsafeIndexer<byte> indexer,
+			int rows,
+			int cols,
+			int x,
+			int y
+		)
 		{
 			/*
 			 * The idea is, that we walk along the most inner
@@ -293,82 +441,96 @@ namespace RatEye.Processing
 			 * of loop iterations down to a minimum
 			 */
 
-			var rows = _grid.Rows;
-			var cols = _grid.Cols;
-
 			Vector2 bottomLeft = null;
 			Vector2 bottomRight = null;
 			Vector2 topRight = null;
 			Vector2 topLeft = null;
 
-			int a, b, c, d, e;
+			int a,
+				b,
+				c,
+				d,
+				e;
 
 			// Go south
 			for (a = y; a < rows; a++)
 			{
-				if (indexer[a, x].Equals(0x00)) return false;
-				if (indexer[a, x + 1].Equals(0xFF))
+				if (indexer[a, x] == 0x00)
+					return false;
+				if (indexer[a, x + 1] == 0xFF)
 				{
 					bottomLeft = new Vector2(x, a);
 					break;
 				}
 
-				if (!(a + 1 < rows)) return false;
+				if (!(a + 1 < rows))
+					return false;
 			}
 
 			// Go east
 			for (b = x + 1; b < cols; b++)
 			{
-				if (indexer[a, b].Equals(0x00)) return false;
-				if (indexer[a - 1, b].Equals(0xFF))
+				if (indexer[a, b] == 0x00)
+					return false;
+				if (indexer[a - 1, b] == 0xFF)
 				{
 					bottomRight = new Vector2(b, a);
 					break;
 				}
 
-				if (!(b + 1 < cols)) return false;
+				if (!(b + 1 < cols))
+					return false;
 			}
 
 			// Go north
 			for (c = a - 1; c > 0; c--)
 			{
-				if (indexer[c, b].Equals(0x00)) return false;
-				if (indexer[c, b - 1].Equals(0xFF))
+				if (indexer[c, b] == 0x00)
+					return false;
+				if (indexer[c, b - 1] == 0xFF)
 				{
 					topRight = new Vector2(b, c);
 					break;
 				}
 
-				if (!(c - 1 > 0)) return false;
+				if (!(c - 1 > 0))
+					return false;
 			}
 
 			// Go west
 			for (d = b - 1; d >= x; d--)
 			{
-				if (indexer[c, d].Equals(0x00)) return false;
-				if (indexer[c + 1, d].Equals(0xFF))
+				if (indexer[c, d] == 0x00)
+					return false;
+				if (indexer[c + 1, d] == 0xFF)
 				{
 					topLeft = new Vector2(d, c);
 					break;
 				}
 
-				if (!(d - 1 >= x)) return false;
+				if (!(d - 1 >= x))
+					return false;
 			}
 
 			// Go south to origin
 			for (e = c + 1; e <= y; e++)
 			{
-				if (indexer[e, d].Equals(0x00)) return false;
-				if (!(e == y && d == x)) continue;
+				if (indexer[e, d] == 0x00)
+					return false;
+				if (!(e == y && d == x))
+					continue;
 
 				var size = bottomRight - topLeft + Vector2.One;
 
 				var altWidth = topRight.X - bottomLeft.X + 1;
 				var altHeight = bottomLeft.Y - topRight.Y + 1;
 
-				if (size != new Vector2(altWidth, altHeight)) return false;
-				if (size == new Vector2(2, 2)) return false;
-				if (_icons.Any(i => i.Position == topLeft)) return false;
+				if (size != new Vector2(altWidth, altHeight))
+					return false;
+				if (size == new Vector2(2, 2))
+					return false;
+				if (_icons.Any(i => i.Position == topLeft))
+					return false;
 
 				// Expand the rect by a small bit to make sure the icon is included
 				var scaledSlotSize = (int)_config.ProcessingConfig.ScaledSlotSize;
@@ -376,8 +538,8 @@ namespace RatEye.Processing
 				topLeft -= scaledSlotSizeVec / 8;
 				size += scaledSlotSizeVec / 4;
 
-				var icon = _image.ToBitmap().Crop(topLeft.X, topLeft.Y, size.X, size.Y);
-				_icons.Add(new Icon(icon, topLeft, size, _config));
+				var icon = image.Crop(topLeft.X, topLeft.Y, size.X, size.Y);
+				_icons.Add(new Icon(icon, topLeft, size, _config, ownsIcon: true));
 				return true;
 			}
 
@@ -394,9 +556,11 @@ namespace RatEye.Processing
 		{
 			SatisfyState(State.GridParsed);
 
-			if (position == null) position = new Vector2(_grid.Size()) / 2;
+			if (position == null)
+				position = new Vector2(_grid.Size()) / 2;
 
-			if (_config.ProcessingConfig.InventoryConfig.OptimizeHighlighted) return LocateIconHighlighted(position);
+			if (_config.ProcessingConfig.InventoryConfig.OptimizeHighlighted)
+				return LocateIconHighlighted(position);
 
 			if (Config.LogDebug)
 			{
@@ -418,12 +582,20 @@ namespace RatEye.Processing
 				Logger.LogDebugMat(debugGrid, "inventory/iconRects");
 			}
 
+			Icon exactPositionMatch = _icons.FirstOrDefault(icon => icon.Position == position);
+			if (exactPositionMatch != null)
+				return exactPositionMatch;
+
 			foreach (var icon in _icons)
 			{
-				if (position.X <= icon.Position.X || position.Y <= icon.Position.Y) continue;
+				if (position.X < icon.Position.X || position.Y < icon.Position.Y)
+					continue;
 
 				var bottomRight = icon.Position + icon.Size;
-				if (position.X < bottomRight.X && position.Y < bottomRight.Y) { return icon; }
+				if (position.X < bottomRight.X && position.Y < bottomRight.Y)
+				{
+					return icon;
+				}
 			}
 
 			return null;
@@ -431,12 +603,14 @@ namespace RatEye.Processing
 
 		private Icon LocateIconHighlighted(Vector2 position)
 		{
-			if (_boundingBoxes.Count == 0) return null;
+			if (_boundingBoxes.Count == 0)
+				return null;
 
 			for (var i = 0; i < _boundingBoxes.Count; i++)
 			{
 				var bb = _boundingBoxes[i];
-				if (!bb.Contains(position)) continue;
+				if (!bb.Contains(position))
+					continue;
 
 				// Compensate more in height as the top and bottom text often interfere
 				var scaledSlotSize = (int)_config.ProcessingConfig.ScaledSlotSize;
@@ -452,9 +626,24 @@ namespace RatEye.Processing
 					Logger.LogDebugMat(debugMat, "inventory/icon");
 				}
 
-				var iconImage = _image.ToBitmap().Crop(bb.X, bb.Y, bb.Width, bb.Height);
-				var icon = new Icon(iconImage, new(bb.X, bb.Y), new(bb.Width, bb.Height), _config);
-				_icons = new List<Icon> { icon };
+				var iconPosition = new Vector2(bb.X, bb.Y);
+				var iconSize = new Vector2(bb.Width, bb.Height);
+				var existingIcon = _icons.FirstOrDefault(icon =>
+					icon.Position == iconPosition && icon.Size == iconSize
+				);
+				if (existingIcon != null)
+					return existingIcon;
+
+				using var image = _image.ToBitmap();
+				var iconImage = image.Crop(bb.X, bb.Y, bb.Width, bb.Height);
+				var icon = new Icon(
+					iconImage,
+					iconPosition,
+					iconSize,
+					_config,
+					ownsIcon: true
+				);
+				_icons.Add(icon);
 				return icon;
 			}
 			return null;
@@ -463,11 +652,19 @@ namespace RatEye.Processing
 		/// <summary>
 		/// Inventory destructor
 		/// </summary>
-		~Inventory()
+		public void Dispose()
 		{
-			_image?.Dispose();
+			if (_disposed)
+				return;
+
+			foreach (Icon icon in _icons)
+				icon.Dispose();
+			_image.Dispose();
+			_normalGridMask?.Dispose();
 			_grid?.Dispose();
 			_vertGrid?.Dispose();
+			_disposed = true;
+			GC.SuppressFinalize(this);
 		}
 	}
 }

@@ -14,6 +14,8 @@ namespace RatEye
 	internal static class Logger
 	{
 		private static List<string> _backlog = new();
+		private static readonly object Sync = new();
+		private static readonly object DebugFileSync = new();
 
 		internal static void LogDebug(string message, Exception e)
 		{
@@ -22,28 +24,47 @@ namespace RatEye
 
 		internal static void LogDebug(string message)
 		{
-			if (Config.LogDebug) AppendToLog("[Debug] " + message);
+			if (Config.LogDebug)
+				AppendToLog("[Debug] " + message);
 		}
 
 		internal static void LogDebugBitmap(Bitmap bitmap, string fileName = "bitmap")
 		{
 			if (Config.LogDebug)
-			{
-				bitmap.Save(GetUniquePath(Config.Path.Debug, fileName, ".png"));
-			}
+				SaveDebugBitmap(bitmap, Config.Path.Debug, fileName);
 		}
 
 		internal static void LogDebugMat(OpenCvSharp.Mat mat, string fileName = "mat")
 		{
-			if (!Config.LogDebug) return;
+			if (!Config.LogDebug)
+				return;
 
-			var tmp = mat;
 			if (mat.Type() == MatType.CV_32FC1)
 			{
-				tmp = new Mat(mat.Size(), MatType.CV_8UC1);
-				mat.ConvertTo(tmp, MatType.CV_8UC1, 255);
+				using var converted = new Mat(mat.Size(), MatType.CV_8UC1);
+				mat.ConvertTo(converted, MatType.CV_8UC1, 255);
+				SaveDebugMat(converted, Config.Path.Debug, fileName);
+				return;
 			}
-			tmp.SaveImage(GetUniquePath(Config.Path.Debug, fileName, ".png"));
+			SaveDebugMat(mat, Config.Path.Debug, fileName);
+		}
+
+		internal static string SaveDebugBitmap(Bitmap bitmap, string basePath, string fileName)
+		{
+			lock (DebugFileSync)
+			{
+				string path = GetUniquePath(basePath, fileName, ".png");
+				bitmap.Save(path);
+				return path;
+			}
+		}
+
+		private static void SaveDebugMat(OpenCvSharp.Mat mat, string basePath, string fileName)
+		{
+			lock (DebugFileSync)
+			{
+				mat.SaveImage(GetUniquePath(basePath, fileName, ".png"));
+			}
 		}
 
 		private static string GetUniquePath(string basePath, string fileName, string extension)
@@ -65,16 +86,31 @@ namespace RatEye
 
 		private static void AppendToLog(string content)
 		{
-			ProcessBacklog();
-
-			var prefix = "[" + DateTime.UtcNow.ToUniversalTime().TimeOfDay + "] > ";
-
-			try { AppendToLogRaw(prefix + content + "\n"); }
-			catch (Exception e)
+			var retryBacklog = false;
+			lock (Sync)
 			{
-				_backlog.Add(prefix + "Could not write to log file\n" + e + "\n");
-				_backlog.Add(prefix + content + "\n");
-				Thread.Sleep(250);
+				ProcessBacklog();
+
+				var prefix = "[" + DateTime.UtcNow.ToUniversalTime().TimeOfDay + "] > ";
+
+				try
+				{
+					AppendToLogRaw(prefix + content + "\n");
+				}
+				catch (Exception e)
+				{
+					_backlog.Add(prefix + "Could not write to log file\n" + e + "\n");
+					_backlog.Add(prefix + content + "\n");
+					retryBacklog = true;
+				}
+			}
+
+			if (!retryBacklog)
+				return;
+
+			Thread.Sleep(250);
+			lock (Sync)
+			{
 				ProcessBacklog();
 			}
 		}
@@ -91,8 +127,14 @@ namespace RatEye
 
 			foreach (var text in _backlog)
 			{
-				try { AppendToLogRaw(text); }
-				catch { newBacklog.Add(text); }
+				try
+				{
+					AppendToLogRaw(text);
+				}
+				catch
+				{
+					newBacklog.Add(text);
+				}
 			}
 
 			_backlog = newBacklog;
