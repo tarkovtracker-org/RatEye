@@ -223,6 +223,38 @@ public class RatEyeCacheTests
 	}
 
 	[Fact]
+	public void Cache_identity_includes_inventory_rendering_configuration()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-cache-inventory-config-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		string cacheDirectory = Path.Combine(root, "cache");
+		Directory.CreateDirectory(iconsDirectory);
+		WriteIcon(Path.Combine(iconsDirectory, "one.png"));
+
+		Config firstConfig = CreateConfig(iconsDirectory);
+		Config secondConfig = CreateConfig(iconsDirectory);
+		secondConfig.ProcessingConfig.InventoryConfig.MinGridColor = (101, 16, 64);
+		try
+		{
+			using (IconManager manager = new(firstConfig, cacheDirectory))
+				manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			using (IconManager manager = new(secondConfig, cacheDirectory))
+				manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+
+			Assert.Equal(2, Directory.GetFiles(cacheDirectory, "*.bmp").Length);
+		}
+		finally
+		{
+			firstConfig.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			secondConfig.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
 	public void Static_icon_changes_replace_and_remove_loaded_templates()
 	{
 		string root = Path.Combine(
@@ -285,7 +317,7 @@ public class RatEyeCacheTests
 		Directory.CreateDirectory(iconsDirectory);
 
 		const int iconCount = 64;
-		RatStash.Item[] items = Enumerable
+		RatStash.Item[] originalItems = Enumerable
 			.Range(0, iconCount)
 			.Select(index => new RatStash.Item
 			{
@@ -296,11 +328,22 @@ public class RatEyeCacheTests
 				Height = 1,
 			})
 			.ToArray();
-		foreach (RatStash.Item item in items)
+		RatStash.Item[] replacementItems = Enumerable
+			.Range(0, iconCount)
+			.Select(index => new RatStash.Item
+			{
+				Id = $"replacement-{index}",
+				Name = $"Replacement {index}",
+				ShortName = $"Replacement {index}",
+				Width = 1,
+				Height = 1,
+			})
+			.ToArray();
+		foreach (RatStash.Item item in originalItems)
 			WriteIcon(Path.Combine(iconsDirectory, item.Id + ".png"));
 
 		Config config = CreateConfig(iconsDirectory);
-		config.RatStashDB = Database.FromItems(items);
+		config.RatStashDB = Database.FromItems(originalItems.Concat(replacementItems));
 		try
 		{
 			using IconManager manager = new(config, Path.Combine(root, "cache"));
@@ -311,7 +354,9 @@ public class RatEyeCacheTests
 			);
 
 			DateTime refreshedTimestamp = DateTime.UtcNow.AddSeconds(2);
-			foreach (RatStash.Item item in items)
+			foreach (RatStash.Item item in originalItems)
+				File.Delete(Path.Combine(iconsDirectory, item.Id + ".png"));
+			foreach (RatStash.Item item in replacementItems)
 			{
 				string iconPath = Path.Combine(iconsDirectory, item.Id + ".png");
 				WriteIcon(iconPath, color: System.Drawing.Color.Red);
@@ -322,6 +367,7 @@ public class RatEyeCacheTests
 			using ManualResetEventSlim observerStarted = new();
 			using CancellationTokenSource stopObserver = new();
 			int observedEmptyTemplates = 0;
+			int observedMissingCorrelation = 0;
 			Task observer = Task.Factory.StartNew(
 				() =>
 				{
@@ -333,6 +379,12 @@ public class RatEyeCacheTests
 						{
 							if (manager.StaticIcons.Count == 0)
 								Interlocked.Exchange(ref observedEmptyTemplates, 1);
+							if (
+								manager.StaticIcons.Values
+									.SelectMany(group => group.Keys)
+									.Any(iconKey => manager.GetItem(iconKey) == null)
+							)
+								Interlocked.Exchange(ref observedMissingCorrelation, 1);
 						}
 						finally
 						{
@@ -359,6 +411,7 @@ public class RatEyeCacheTests
 			}
 
 			Assert.Equal(0, observedEmptyTemplates);
+			Assert.Equal(0, observedMissingCorrelation);
 			Assert.Equal(
 				iconCount,
 				manager.StaticIcons[new Vector2(1, 1)].Count

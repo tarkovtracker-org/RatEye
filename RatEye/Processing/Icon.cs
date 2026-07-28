@@ -231,12 +231,17 @@ namespace RatEye.Processing
 			var iconSlotSize = IconSlotSize();
 			var slotSize = rotated ? new Vector2(iconSlotSize.Y, iconSlotSize.X) : iconSlotSize;
 			(string match, float confidence, Vector2 pos) result = default;
+			Item matchedItem = null;
 			iconManager.EnsureStaticIconsLoaded(slotSize);
 			iconManager.StaticIconsLock.EnterReadLock();
 			try
 			{
 				if (iconManager.StaticIcons.TryGetValue(slotSize, out var icons))
+				{
 					result = TemplateMatchSub(source, icons);
+					if (result.confidence > _detectionConfidence)
+						matchedItem = iconManager.GetItem(result.match);
+				}
 			}
 			finally
 			{
@@ -257,7 +262,7 @@ namespace RatEye.Processing
 				(rotated ? new(result.pos.Y, result.pos.X) : result.pos)
 				* _config.ProcessingConfig.Scale;
 			_detectionConfidence = result.confidence;
-			_item = _config.IconManager.GetItem(result.match);
+			_item = matchedItem;
 			_itemExtraInfo = null;
 			Timings.RecordSince(
 				rotated ? "icon.template_match_rotated" : "icon.template_match",

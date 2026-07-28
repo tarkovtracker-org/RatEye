@@ -93,7 +93,7 @@ namespace RatEye
             {
                 if (Directory.Exists(_config.PathConfig.StaticIcons))
                 {
-                    LoadStaticCorrelationData();
+                    ReplaceStaticCorrelationData(BuildStaticCorrelationData());
                 }
                 else
                 {
@@ -111,6 +111,7 @@ namespace RatEye
             lock (_staticIconLoadLock)
             {
                 Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
+                Dictionary<string, Item> newCorrelationData;
                 bool replaceExistingIcons;
                 bool pollIconSources = DateTime.UtcNow >= _nextStaticIconSourcePollUtc;
                 string directoryFingerprint = _staticIconDirectoryFingerprint;
@@ -135,11 +136,15 @@ namespace RatEye
                         return;
                     }
 
-                    LoadStaticCorrelationData();
+                    newCorrelationData =
+                        replaceExistingIcons
+                            ? BuildStaticCorrelationData()
+                            : GetStaticCorrelationDataSnapshot();
                     newIcons = LoadNewIcons(
                         _config.PathConfig.StaticIcons,
                         slotSize,
                         sourceHashes,
+                        newCorrelationData,
                         skipExistingIcons: !replaceExistingIcons
                     );
                 }
@@ -158,12 +163,24 @@ namespace RatEye
                 {
                     if (replaceExistingIcons)
                     {
-                        Dictionary<Vector2, Dictionary<string, Mat>> replacedIcons = StaticIcons;
-                        StaticIcons = newIcons;
-                        _loadedStaticIconSizes.Clear();
+                        _staticCorrelationDataLock.EnterWriteLock();
+                        try
+                        {
+                            Dictionary<Vector2, Dictionary<string, Mat>> replacedIcons =
+                                StaticIcons;
+                            StaticIcons = newIcons;
+                            _staticCorrelationData = newCorrelationData;
+                            _loadedStaticIconSizes.Clear();
 
-                        foreach (Mat icon in replacedIcons.Values.SelectMany(group => group.Values))
-                            icon.Dispose();
+                            foreach (
+                                Mat icon in replacedIcons.Values.SelectMany(group => group.Values)
+                            )
+                                icon.Dispose();
+                        }
+                        finally
+                        {
+                            _staticCorrelationDataLock.ExitWriteLock();
+                        }
                     }
                     else
                     {
@@ -251,6 +268,7 @@ namespace RatEye
             string folderPath,
             Vector2 slotSizeFilter = null,
             IReadOnlyDictionary<string, string> sourceHashes = null,
+            IReadOnlyDictionary<string, Item> correlationData = null,
             bool skipExistingIcons = true
         )
         {
@@ -264,7 +282,6 @@ namespace RatEye
             try
             {
                 var iconPathArray = Directory.GetFiles(folderPath, "*.png");
-                _staticCorrelationDataLock.EnterReadLock();
                 StaticIconsLock.EnterReadLock();
                 try
                 {
@@ -279,8 +296,10 @@ namespace RatEye
                             {
                                 var iconKey = GetIconKey(iconPath);
 
-                                var item = GetItemUnsafe(iconKey);
-                                if (item == null)
+                                if (
+                                    correlationData == null
+                                    || !correlationData.TryGetValue(iconKey, out Item item)
+                                )
                                     return;
                                 if (slotSizeFilter != null && new Vector2(item.GetSlotSize()) != slotSizeFilter)
                                     return;
@@ -374,7 +393,6 @@ namespace RatEye
                 }
                 finally
                 {
-                    _staticCorrelationDataLock.ExitReadLock();
                     StaticIconsLock.ExitReadLock();
                 }
             }
@@ -698,7 +716,7 @@ namespace RatEye
 
         #region Correlation Data Loading
 
-        private void LoadStaticCorrelationData()
+        private Dictionary<string, Item> BuildStaticCorrelationData()
         {
             var correlationData = new Dictionary<string, Item>();
 
@@ -717,6 +735,24 @@ namespace RatEye
                 correlationData[iconKey] = item;
             }
 
+            return correlationData;
+        }
+
+        private Dictionary<string, Item> GetStaticCorrelationDataSnapshot()
+        {
+            _staticCorrelationDataLock.EnterReadLock();
+            try
+            {
+                return _staticCorrelationData;
+            }
+            finally
+            {
+                _staticCorrelationDataLock.ExitReadLock();
+            }
+        }
+
+        private void ReplaceStaticCorrelationData(Dictionary<string, Item> correlationData)
+        {
             _staticCorrelationDataLock.EnterWriteLock();
             try
             {
@@ -769,23 +805,6 @@ namespace RatEye
         }
 
         /// <summary>
-        /// Get the item referenced by its icon key while assuming that
-        /// <see cref="_staticCorrelationDataLock"/> is held.
-        /// </summary>
-        /// <param name="iconKey">The icon key</param>
-        /// <returns>The matching item</returns>
-        private Item GetItemUnsafe(string iconKey)
-        {
-            if (iconKey.StartsWith(_config.PathConfig.StaticIcons))
-            {
-                _staticCorrelationData.TryGetValue(iconKey, out var item);
-                return item;
-            }
-
-            return null;
-        }
-
-        /// <summary>
         /// Resolve the icon path for a item possible item extra info
         /// </summary>
         /// <param name="item">The item which icon path shall be resolved</param>
@@ -814,14 +833,12 @@ namespace RatEye
                 ProcessingConfig = new Config.Processing()
                 {
                     // Language = _config.ProcessingConfig.Language,
+                    BaseSlotSize = _config.ProcessingConfig.BaseSlotSize,
                     IconConfig = new Config.Processing.Icon()
                     {
                         ScanRotatedIcons = _config.ProcessingConfig.IconConfig.ScanRotatedIcons,
                     },
-                    InventoryConfig = new Config.Processing.Inventory()
-                    {
-                        OptimizeHighlighted = _config.ProcessingConfig.InventoryConfig.OptimizeHighlighted,
-                    },
+                    InventoryConfig = _config.ProcessingConfig.InventoryConfig,
                 },
             }.GetHash();
             return ("template-v2:" + configHash).SHA256Hash();
