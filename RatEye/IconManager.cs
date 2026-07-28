@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using OpenCvSharp;
@@ -19,6 +20,7 @@ namespace RatEye
         private const int MaxCacheFiles = 10_000;
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(30);
         private static readonly TimeSpan MaxTemporaryCacheFileAge = TimeSpan.FromDays(1);
+        private static readonly TimeSpan StaticIconSourcePollInterval = TimeSpan.FromSeconds(30);
 
         private readonly Config _config;
         private readonly string _cacheDirectory;
@@ -56,6 +58,9 @@ namespace RatEye
         private readonly object _staticIconLoadLock = new();
         private readonly HashSet<Vector2> _loadedStaticIconSizes = new();
         private string _staticIconDirectoryFingerprint;
+        private Dictionary<string, string> _staticIconSourceHashes =
+            new(StringComparer.OrdinalIgnoreCase);
+        private DateTime _nextStaticIconSourcePollUtc = DateTime.MinValue;
         internal IReadOnlyList<(Item Item, string NormalizedName)> NormalizedItems { get; }
         private bool _disposed;
 
@@ -107,24 +112,34 @@ namespace RatEye
             {
                 Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
                 bool replaceExistingIcons;
-                string directoryFingerprint;
+                bool pollIconSources = DateTime.UtcNow >= _nextStaticIconSourcePollUtc;
+                string directoryFingerprint = _staticIconDirectoryFingerprint;
+                Dictionary<string, string> sourceHashes = _staticIconSourceHashes;
                 try
                 {
-                    directoryFingerprint = GetStaticIconDirectoryFingerprint(
-                        _config.PathConfig.StaticIcons
-                    );
+                    if (pollIconSources)
+                    {
+                        (directoryFingerprint, sourceHashes) =
+                            GetStaticIconDirectorySnapshot(_config.PathConfig.StaticIcons);
+                    }
+
                     replaceExistingIcons = !string.Equals(
                         _staticIconDirectoryFingerprint,
                         directoryFingerprint,
                         StringComparison.Ordinal
                     );
                     if (!replaceExistingIcons && _loadedStaticIconSizes.Contains(slotSize))
+                    {
+                        if (pollIconSources)
+                            CommitStaticIconSourceSnapshot(directoryFingerprint, sourceHashes);
                         return;
+                    }
 
                     LoadStaticCorrelationData();
                     newIcons = LoadNewIcons(
                         _config.PathConfig.StaticIcons,
                         slotSize,
+                        sourceHashes,
                         skipExistingIcons: !replaceExistingIcons
                     );
                 }
@@ -146,7 +161,6 @@ namespace RatEye
                         Dictionary<Vector2, Dictionary<string, Mat>> replacedIcons = StaticIcons;
                         StaticIcons = newIcons;
                         _loadedStaticIconSizes.Clear();
-                        _staticIconDirectoryFingerprint = directoryFingerprint;
 
                         foreach (Mat icon in replacedIcons.Values.SelectMany(group => group.Values))
                             icon.Dispose();
@@ -163,6 +177,8 @@ namespace RatEye
                     }
 
                     _loadedStaticIconSizes.Add(slotSize);
+                    if (pollIconSources)
+                        CommitStaticIconSourceSnapshot(directoryFingerprint, sourceHashes);
                 }
                 finally
                 {
@@ -171,29 +187,70 @@ namespace RatEye
             }
         }
 
-        private static string GetStaticIconDirectoryFingerprint(string directory)
+        internal void InvalidateStaticIconSources()
+        {
+            lock (_staticIconLoadLock)
+                _nextStaticIconSourcePollUtc = DateTime.MinValue;
+        }
+
+        private void CommitStaticIconSourceSnapshot(
+            string directoryFingerprint,
+            Dictionary<string, string> sourceHashes
+        )
+        {
+            _staticIconDirectoryFingerprint = directoryFingerprint;
+            _staticIconSourceHashes = sourceHashes;
+            _nextStaticIconSourcePollUtc =
+                sourceHashes.Count == 0
+                    ? DateTime.MinValue
+                    : DateTime.UtcNow.Add(StaticIconSourcePollInterval);
+        }
+
+        private static (
+            string fingerprint,
+            Dictionary<string, string> sourceHashes
+        ) GetStaticIconDirectorySnapshot(string directory)
         {
             if (!Directory.Exists(directory))
                 throw new DirectoryNotFoundException(directory);
 
-            return string
+            var sourceHashes = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase
+            );
+            string[] iconPaths = Directory
+                .GetFiles(directory, "*.png")
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (string iconPath in iconPaths)
+                sourceHashes[iconPath] = GetFileContentHash(iconPath);
+
+            string fingerprint = string
                 .Join(
                     "|",
-                    Directory
-                        .GetFiles(directory, "*.png")
-                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                        .Select(path =>
-                        {
-                            var file = new FileInfo(path);
-                            return $"{file.Name}:{file.Length}:{file.LastWriteTimeUtc.Ticks}";
-                        })
+                    iconPaths.Select(path =>
+                        $"{System.IO.Path.GetFileName(path)}:{sourceHashes[path]}"
+                    )
                 )
                 .SHA256Hash();
+            return (fingerprint, sourceHashes);
+        }
+
+        private static string GetFileContentHash(string path)
+        {
+            using FileStream stream = File.Open(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete
+            );
+            using SHA256 sha256 = SHA256.Create();
+            return string.Concat(sha256.ComputeHash(stream).Select(value => value.ToString("X2")));
         }
 
         private Dictionary<Vector2, Dictionary<string, Mat>> LoadNewIcons(
             string folderPath,
             Vector2 slotSizeFilter = null,
+            IReadOnlyDictionary<string, string> sourceHashes = null,
             bool skipExistingIcons = true
         )
         {
@@ -236,9 +293,13 @@ namespace RatEye
                                     return;
 
                                 var useCache = _config.ProcessingConfig.UseCache;
-                                var sourceFile = new FileInfo(iconPath);
+                                string sourceHash =
+                                    sourceHashes != null
+                                    && sourceHashes.TryGetValue(iconPath, out string snapshotHash)
+                                        ? snapshotHash
+                                        : GetFileContentHash(iconPath);
                                 var cacheIdentity =
-                                    $"{iconKey}|{sourceFile.Length}|{sourceFile.LastWriteTimeUtc.Ticks}"
+                                    $"{iconKey}|{sourceHash}"
                                     + $"|{item.GetType().FullName}|{item.BackgroundColor}";
                                 var cacheIconPath = Path.Combine(
                                     _cacheDirectory,

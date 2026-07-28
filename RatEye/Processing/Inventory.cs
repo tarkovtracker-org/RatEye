@@ -582,6 +582,10 @@ namespace RatEye.Processing
 				Logger.LogDebugMat(debugGrid, "inventory/iconRects");
 			}
 
+			Icon exactPositionMatch = _icons.FirstOrDefault(icon => icon.Position == position);
+			if (exactPositionMatch != null)
+				return exactPositionMatch;
+
 			foreach (var icon in _icons)
 			{
 				if (position.X < icon.Position.X || position.Y < icon.Position.Y)

@@ -170,8 +170,11 @@ public class ProcessingRegressionTests
 		Assert.Equal(2, inventory.Icons.Count());
 		Assert.NotNull(inventory.LocateIcon(new Vector2(53, 79)));
 		Assert.NotNull(inventory.LocateIcon(new Vector2(137, 79)));
-		RatEye.Processing.Icon first = inventory.Icons.First();
+		RatEye.Processing.Icon[] icons = inventory.Icons.ToArray();
+		RatEye.Processing.Icon first = icons[0];
+		RatEye.Processing.Icon second = icons[1];
 		Assert.Same(first, inventory.LocateIcon(first.Position));
+		Assert.Same(second, inventory.LocateIcon(second.Position));
 	}
 
 	[Fact]
@@ -251,6 +254,27 @@ public class ProcessingRegressionTests
 		Assert.Equal(0.99f, matches[0].confidence);
 		Assert.Equal(new Vector2(7, 2), matches[1].position);
 		Assert.Equal(0.97f, matches[1].confidence);
+	}
+
+	[Fact]
+	public void Marker_peak_extraction_keeps_candidate_when_higher_neighbor_is_suppressed()
+	{
+		using Mat response = new(1, 3, MatType.CV_32FC1, Scalar.All(0));
+		response.Set(0, 0, 0.90f);
+		response.Set(0, 1, 0.91f);
+		response.Set(0, 2, 0.92f);
+
+		var matches = RatEye.Processing.MultiInspection.ExtractMarkerPeaks(
+			response,
+			new System.Drawing.Size(2, 1),
+			0.8f
+		);
+
+		Assert.Equal(2, matches.Count);
+		Assert.Equal(new Vector2(2, 0), matches[0].position);
+		Assert.Equal(0.92f, matches[0].confidence);
+		Assert.Equal(new Vector2(0, 0), matches[1].position);
+		Assert.Equal(0.90f, matches[1].confidence);
 	}
 
 	[Fact]

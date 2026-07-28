@@ -151,7 +151,7 @@ namespace RatEye.Processing
 					if (
 						!float.IsNaN(confidence)
 						&& confidence >= effectiveThreshold
-						&& IsLocalMaximum(
+						&& IsPlateauRepresentative(
 							responseIndexer,
 							rows,
 							columns,
@@ -203,7 +203,7 @@ namespace RatEye.Processing
 			return matches;
 		}
 
-		private static bool IsLocalMaximum(
+		private static bool IsPlateauRepresentative(
 			Mat.UnsafeIndexer<float> response,
 			int rows,
 			int columns,
@@ -225,13 +225,10 @@ namespace RatEye.Processing
 
 					float neighborConfidence = response[neighborRow, neighborColumn];
 					if (
-						neighborConfidence > confidence
-						|| (
-							neighborConfidence == confidence
-							&& (
-								neighborRow < row
-								|| (neighborRow == row && neighborColumn < column)
-							)
+						neighborConfidence == confidence
+						&& (
+							neighborRow < row
+							|| (neighborRow == row && neighborColumn < column)
 						)
 					)
 						return false;

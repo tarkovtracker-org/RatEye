@@ -232,7 +232,18 @@ public class RatEyeCacheTests
 		string iconsDirectory = Path.Combine(root, "icons");
 		string iconPath = Path.Combine(iconsDirectory, "one.png");
 		Directory.CreateDirectory(iconsDirectory);
-		WriteIcon(iconPath);
+		string firstVersionPath = Path.Combine(root, "first.png");
+		string secondVersionPath = Path.Combine(root, "second.png");
+		WriteIcon(firstVersionPath);
+		WriteIcon(secondVersionPath, color: System.Drawing.Color.Red);
+		byte[] firstVersion = File.ReadAllBytes(firstVersionPath);
+		byte[] secondVersion = File.ReadAllBytes(secondVersionPath);
+		int sourceLength = Math.Max(firstVersion.Length, secondVersion.Length);
+		Array.Resize(ref firstVersion, sourceLength);
+		Array.Resize(ref secondVersion, sourceLength);
+		DateTime sourceTimestamp = DateTime.UtcNow.AddMinutes(-1);
+		File.WriteAllBytes(iconPath, firstVersion);
+		File.SetLastWriteTimeUtc(iconPath, sourceTimestamp);
 
 		Config config = CreateConfig(iconsDirectory);
 		try
@@ -241,14 +252,18 @@ public class RatEyeCacheTests
 			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
 			Mat original = manager.StaticIcons[new Vector2(1, 1)].Values.Single();
 
-			WriteIcon(iconPath, color: System.Drawing.Color.Red);
-			File.SetLastWriteTimeUtc(iconPath, DateTime.UtcNow.AddSeconds(2));
+			File.WriteAllBytes(iconPath, secondVersion);
+			File.SetLastWriteTimeUtc(iconPath, sourceTimestamp);
+			manager.InvalidateStaticIconSources();
 			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
 			Mat replacement = manager.StaticIcons[new Vector2(1, 1)].Values.Single();
 
 			Assert.NotSame(original, replacement);
+			Assert.Equal(sourceLength, new FileInfo(iconPath).Length);
+			Assert.Equal(sourceTimestamp, File.GetLastWriteTimeUtc(iconPath));
 
 			File.Delete(iconPath);
+			manager.InvalidateStaticIconSources();
 			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
 			Assert.Empty(manager.StaticIcons);
 		}
@@ -302,6 +317,7 @@ public class RatEyeCacheTests
 				WriteIcon(iconPath, color: System.Drawing.Color.Red);
 				File.SetLastWriteTimeUtc(iconPath, refreshedTimestamp);
 			}
+			manager.InvalidateStaticIconSources();
 
 			using ManualResetEventSlim observerStarted = new();
 			using CancellationTokenSource stopObserver = new();
