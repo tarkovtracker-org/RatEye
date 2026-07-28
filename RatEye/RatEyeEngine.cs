@@ -159,6 +159,7 @@ namespace RatEye
 					{
 						lock (Config.ProcessingConfig.InspectionConfig.TesseractSync)
 						{
+							Config.ProcessingConfig.InspectionConfig.TesseractReleased = true;
 							try
 							{
 								Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
@@ -176,6 +177,7 @@ namespace RatEye
 					{
 						lock (Config.ProcessingConfig.IconConfig.TesseractSync)
 						{
+							Config.ProcessingConfig.IconConfig.TesseractReleased = true;
 							try
 							{
 								Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();

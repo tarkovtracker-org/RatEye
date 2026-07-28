@@ -537,6 +537,9 @@ namespace RatEye.Processing
 		/// <returns>Tesseract instance trained for the bender font</returns>
 		private TesseractEngine GetTesseractEngineUnsafe()
 		{
+			if (IconConfig.TesseractReleased)
+				throw new ObjectDisposedException(nameof(RatEyeEngine));
+
 			// Return if tesseract instance was already created
 			var tesseractEngine = IconConfig.TesseractEngine;
 			if (tesseractEngine != null)

@@ -47,6 +47,7 @@ namespace RatEye
                 /// </summary>
                 internal TesseractEngine TesseractEngine;
                 internal readonly object TesseractSync = new();
+                internal bool TesseractReleased;
 
                 /// <summary>
                 /// Create a new icon config instance

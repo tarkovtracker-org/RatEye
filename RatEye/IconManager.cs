@@ -282,6 +282,10 @@ namespace RatEye
                         StaticIconsLock.ExitWriteLock();
                     }
                 }
+
+                Logger.LogDebug(
+                    "Static icon sources kept changing while loading; icon matching for this slot size stays empty until the next scan."
+                );
             }
         }
 
@@ -294,6 +298,8 @@ namespace RatEye
         {
             lock (_staticIconSourceWatcherLock)
             {
+                if (_disposed)
+                    return false;
                 if (_staticIconSourceWatcher != null)
                     return true;
                 if (!Directory.Exists(_config.PathConfig.StaticIcons))
@@ -1108,15 +1114,18 @@ namespace RatEye
 
         public void Dispose()
         {
-            if (_disposed)
-                return;
-
-            DisposeStaticIconSourceWatcher();
+            lock (_staticIconSourceWatcherLock)
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                _staticIconSourceWatcher?.Dispose();
+                _staticIconSourceWatcher = null;
+            }
             ClearStaticIcons();
 
             StaticIconsLock.Dispose();
             _staticCorrelationDataLock.Dispose();
-            _disposed = true;
         }
 
         private static void DisposeIconCollection(
