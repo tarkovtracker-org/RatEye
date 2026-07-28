@@ -20,9 +20,12 @@ namespace RatEye
         private const int MaxCacheFiles = 10_000;
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(30);
         private static readonly TimeSpan MaxTemporaryCacheFileAge = TimeSpan.FromDays(1);
+        private static readonly TimeSpan StaticIconSourceFallbackPollInterval =
+            TimeSpan.FromSeconds(30);
 
         private readonly Config _config;
         private readonly string _cacheDirectory;
+        private readonly Func<string, FileSystemWatcher> _staticIconSourceWatcherFactory;
 
         /// <summary>
         /// Static icons are those which are rendered ahead of time.
@@ -61,8 +64,11 @@ namespace RatEye
         private Dictionary<string, string> _staticIconSourceHashes =
             new(StringComparer.OrdinalIgnoreCase);
         private FileSystemWatcher _staticIconSourceWatcher;
+        private bool _staticIconSourceWatcherUnavailable;
+        private DateTime _nextStaticIconSourceWatcherRetryUtc = DateTime.MinValue;
         private long _staticIconSourceGeneration = 1;
         private long _committedStaticIconSourceGeneration;
+        private DateTime _nextStaticIconSourceFallbackPollUtc = DateTime.MinValue;
         internal IReadOnlyList<(Item Item, string NormalizedName)> NormalizedItems { get; }
         private bool _disposed;
 
@@ -74,10 +80,17 @@ namespace RatEye
         internal IconManager(Config config)
             : this(config, config.PathConfig.CacheDir) { }
 
-        internal IconManager(Config config, string cacheDirectory)
+        internal IconManager(
+            Config config,
+            string cacheDirectory,
+            Func<string, FileSystemWatcher> staticIconSourceWatcherFactory = null
+        )
         {
             _config = config;
             _cacheDirectory = cacheDirectory;
+            _staticIconSourceWatcherFactory =
+                staticIconSourceWatcherFactory
+                ?? (path => new FileSystemWatcher(path, "*.png"));
             NormalizedItems = _config
                 .RatStashDB.GetItems()
                 .Select(item => (item, (item.Name ?? "").CyrillicToLatin().ToLowerInvariant()))
@@ -119,11 +132,15 @@ namespace RatEye
                     Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
                     Dictionary<string, Item> newCorrelationData;
                     bool replaceExistingIcons;
-                    EnsureStaticIconSourceWatcher();
+                    bool watcherAvailable = EnsureStaticIconSourceWatcher();
                     long sourceGeneration = Volatile.Read(ref _staticIconSourceGeneration);
                     bool refreshIconSources =
                         _staticIconSourceHashes.Count == 0
-                        || sourceGeneration != _committedStaticIconSourceGeneration;
+                        || sourceGeneration != _committedStaticIconSourceGeneration
+                        || (
+                            !watcherAvailable
+                            && DateTime.UtcNow >= _nextStaticIconSourceFallbackPollUtc
+                        );
                     string directoryFingerprint = _staticIconDirectoryFingerprint;
                     Dictionary<string, string> sourceHashes = _staticIconSourceHashes;
                     try
@@ -157,7 +174,8 @@ namespace RatEye
                                 CommitStaticIconSourceSnapshot(
                                     directoryFingerprint,
                                     sourceHashes,
-                                    sourceGeneration
+                                    sourceGeneration,
+                                    watcherAvailable
                                 );
                             }
                             return;
@@ -244,7 +262,8 @@ namespace RatEye
                             CommitStaticIconSourceSnapshot(
                                 directoryFingerprint,
                                 sourceHashes,
-                                sourceGeneration
+                                sourceGeneration,
+                                watcherAvailable
                             );
                         return;
                     }
@@ -261,41 +280,56 @@ namespace RatEye
             Interlocked.Increment(ref _staticIconSourceGeneration);
         }
 
-        private void EnsureStaticIconSourceWatcher()
+        private bool EnsureStaticIconSourceWatcher()
         {
             lock (_staticIconSourceWatcherLock)
             {
+                if (_staticIconSourceWatcher != null)
+                    return true;
+                if (!Directory.Exists(_config.PathConfig.StaticIcons))
+                    return false;
                 if (
-                    _staticIconSourceWatcher != null
-                    || !Directory.Exists(_config.PathConfig.StaticIcons)
+                    _staticIconSourceWatcherUnavailable
+                    && DateTime.UtcNow < _nextStaticIconSourceWatcherRetryUtc
                 )
-                    return;
+                    return false;
 
-                var watcher = new FileSystemWatcher(_config.PathConfig.StaticIcons, "*.png")
+                FileSystemWatcher watcher = null;
+                try
                 {
-                    IncludeSubdirectories = false,
-                    NotifyFilter =
+                    watcher = _staticIconSourceWatcherFactory(
+                        _config.PathConfig.StaticIcons
+                    );
+                    watcher.IncludeSubdirectories = false;
+                    watcher.NotifyFilter =
                         NotifyFilters.FileName
                         | NotifyFilters.Size
                         | NotifyFilters.LastWrite
-                        | NotifyFilters.CreationTime,
-                };
-                watcher.Changed += OnStaticIconSourceChanged;
-                watcher.Created += OnStaticIconSourceChanged;
-                watcher.Deleted += OnStaticIconSourceChanged;
-                watcher.Renamed += OnStaticIconSourceRenamed;
-                watcher.Error += OnStaticIconSourceWatcherError;
-
-                try
-                {
+                        | NotifyFilters.CreationTime;
+                    watcher.Changed += OnStaticIconSourceChanged;
+                    watcher.Created += OnStaticIconSourceChanged;
+                    watcher.Deleted += OnStaticIconSourceChanged;
+                    watcher.Renamed += OnStaticIconSourceRenamed;
+                    watcher.Error += OnStaticIconSourceWatcherError;
                     _staticIconSourceWatcher = watcher;
                     watcher.EnableRaisingEvents = true;
+                    _staticIconSourceWatcherUnavailable = false;
+                    _nextStaticIconSourceWatcherRetryUtc = DateTime.MaxValue;
+                    return true;
                 }
-                catch
+                catch (Exception e) when (IsRecoverableStaticIconWatcherException(e))
                 {
                     _staticIconSourceWatcher = null;
-                    watcher.Dispose();
-                    throw;
+                    _staticIconSourceWatcherUnavailable = true;
+                    _nextStaticIconSourceWatcherRetryUtc = DateTime.UtcNow.Add(
+                        StaticIconSourceFallbackPollInterval
+                    );
+                    watcher?.Dispose();
+                    Logger.LogDebug(
+                        "Static icon source watching is unavailable; falling back to periodic refresh checks.",
+                        e
+                    );
+                    return false;
                 }
             }
         }
@@ -320,19 +354,30 @@ namespace RatEye
 
                 _staticIconSourceWatcher.Dispose();
                 _staticIconSourceWatcher = null;
+                _staticIconSourceWatcherUnavailable = false;
+                _nextStaticIconSourceWatcherRetryUtc = DateTime.MinValue;
             }
         }
 
         private void CommitStaticIconSourceSnapshot(
             string directoryFingerprint,
             Dictionary<string, string> sourceHashes,
-            long sourceGeneration
+            long sourceGeneration,
+            bool watcherAvailable
         )
         {
             _staticIconDirectoryFingerprint = directoryFingerprint;
             _staticIconSourceHashes = sourceHashes;
             _committedStaticIconSourceGeneration = sourceGeneration;
+            _nextStaticIconSourceFallbackPollUtc =
+                watcherAvailable
+                    ? DateTime.MaxValue
+                    : DateTime.UtcNow.Add(StaticIconSourceFallbackPollInterval);
         }
+
+        private static bool IsRecoverableStaticIconWatcherException(Exception exception) =>
+            IsRecoverableFileSystemException(exception)
+            || exception is ArgumentException or InvalidOperationException;
 
         private static (
             string fingerprint,

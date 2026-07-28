@@ -192,6 +192,44 @@ public class RatEyeCacheTests
 	}
 
 	[Fact]
+	public void Static_icons_load_when_source_watching_is_unavailable()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-watcher-fallback-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		Directory.CreateDirectory(iconsDirectory);
+		WriteIcon(Path.Combine(iconsDirectory, "one.png"));
+		Config config = CreateConfig(iconsDirectory);
+		int watcherAttempts = 0;
+
+		try
+		{
+			using IconManager manager = new(
+				config,
+				Path.Combine(root, "cache"),
+				_ =>
+				{
+					watcherAttempts++;
+					throw new IOException("FileSystemWatcher is unavailable.");
+				}
+			);
+
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+
+			Assert.Single(manager.StaticIcons[new Vector2(1, 1)]);
+			Assert.Equal(1, watcherAttempts);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
 	public void Cache_identity_includes_catalog_rendering_properties()
 	{
 		string root = Path.Combine(
