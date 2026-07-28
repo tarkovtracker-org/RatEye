@@ -409,8 +409,7 @@ namespace RatEye.Processing
 		{
 			var processingConfig = config.ProcessingConfig;
 			var inspectionConfig = processingConfig.InspectionConfig;
-			inspectionConfig.EnsureMarker();
-			Bitmap marker = inspectionConfig.Marker;
+			Bitmap marker = inspectionConfig.CloneMarker();
 			Bitmap output = marker.Rescale(
 				inspectionConfig.MarkerItemScale * processingConfig.Scale
 			);
@@ -424,6 +423,8 @@ namespace RatEye.Processing
 			{
 				if (!ReferenceEquals(output, marker) && !ReferenceEquals(output, result))
 					output.Dispose();
+				if (!ReferenceEquals(marker, result))
+					marker.Dispose();
 			}
 		}
 

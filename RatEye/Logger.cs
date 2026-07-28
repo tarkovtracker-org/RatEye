@@ -8,119 +8,119 @@ using OpenCvSharp;
 
 namespace RatEye
 {
-    /// <summary>
-    /// Class for logging events and control flow of RatEye
-    /// </summary>
-    internal static class Logger
-    {
-        private static List<string> _backlog = new();
-        private static readonly object Sync = new();
+	/// <summary>
+	/// Class for logging events and control flow of RatEye
+	/// </summary>
+	internal static class Logger
+	{
+		private static List<string> _backlog = new();
+		private static readonly object Sync = new();
 
-        internal static void LogDebug(string message, Exception e)
-        {
-            LogDebug(message + "\nException: " + e);
-        }
+		internal static void LogDebug(string message, Exception e)
+		{
+			LogDebug(message + "\nException: " + e);
+		}
 
-        internal static void LogDebug(string message)
-        {
-            if (Config.LogDebug)
-                AppendToLog("[Debug] " + message);
-        }
+		internal static void LogDebug(string message)
+		{
+			if (Config.LogDebug)
+				AppendToLog("[Debug] " + message);
+		}
 
-        internal static void LogDebugBitmap(Bitmap bitmap, string fileName = "bitmap")
-        {
-            if (Config.LogDebug)
-            {
-                bitmap.Save(GetUniquePath(Config.Path.Debug, fileName, ".png"));
-            }
-        }
+		internal static void LogDebugBitmap(Bitmap bitmap, string fileName = "bitmap")
+		{
+			if (Config.LogDebug)
+			{
+				bitmap.Save(GetUniquePath(Config.Path.Debug, fileName, ".png"));
+			}
+		}
 
-        internal static void LogDebugMat(OpenCvSharp.Mat mat, string fileName = "mat")
-        {
-            if (!Config.LogDebug)
-                return;
+		internal static void LogDebugMat(OpenCvSharp.Mat mat, string fileName = "mat")
+		{
+			if (!Config.LogDebug)
+				return;
 
-            if (mat.Type() == MatType.CV_32FC1)
-            {
-                using var converted = new Mat(mat.Size(), MatType.CV_8UC1);
-                mat.ConvertTo(converted, MatType.CV_8UC1, 255);
-                converted.SaveImage(GetUniquePath(Config.Path.Debug, fileName, ".png"));
-                return;
-            }
-            mat.SaveImage(GetUniquePath(Config.Path.Debug, fileName, ".png"));
-        }
+			if (mat.Type() == MatType.CV_32FC1)
+			{
+				using var converted = new Mat(mat.Size(), MatType.CV_8UC1);
+				mat.ConvertTo(converted, MatType.CV_8UC1, 255);
+				converted.SaveImage(GetUniquePath(Config.Path.Debug, fileName, ".png"));
+				return;
+			}
+			mat.SaveImage(GetUniquePath(Config.Path.Debug, fileName, ".png"));
+		}
 
-        private static string GetUniquePath(string basePath, string fileName, string extension)
-        {
-            fileName = fileName.Replace(' ', '_');
+		private static string GetUniquePath(string basePath, string fileName, string extension)
+		{
+			fileName = fileName.Replace(' ', '_');
 
-            var index = 0;
-            var uniquePath = Path.Combine(basePath, fileName + "(" + index + ")" + extension);
+			var index = 0;
+			var uniquePath = Path.Combine(basePath, fileName + "(" + index + ")" + extension);
 
-            while (File.Exists(uniquePath))
-            {
-                index += 1;
-                uniquePath = Path.Combine(basePath, fileName + "(" + index + ")" + extension);
-            }
+			while (File.Exists(uniquePath))
+			{
+				index += 1;
+				uniquePath = Path.Combine(basePath, fileName + "(" + index + ")" + extension);
+			}
 
-            Directory.CreateDirectory(Path.GetDirectoryName(uniquePath));
-            return uniquePath;
-        }
+			Directory.CreateDirectory(Path.GetDirectoryName(uniquePath));
+			return uniquePath;
+		}
 
-        private static void AppendToLog(string content)
-        {
-            var retryBacklog = false;
-            lock (Sync)
-            {
-                ProcessBacklog();
+		private static void AppendToLog(string content)
+		{
+			var retryBacklog = false;
+			lock (Sync)
+			{
+				ProcessBacklog();
 
-                var prefix = "[" + DateTime.UtcNow.ToUniversalTime().TimeOfDay + "] > ";
+				var prefix = "[" + DateTime.UtcNow.ToUniversalTime().TimeOfDay + "] > ";
 
-                try
-                {
-                    AppendToLogRaw(prefix + content + "\n");
-                }
-                catch (Exception e)
-                {
-                    _backlog.Add(prefix + "Could not write to log file\n" + e + "\n");
-                    _backlog.Add(prefix + content + "\n");
-                    retryBacklog = true;
-                }
-            }
+				try
+				{
+					AppendToLogRaw(prefix + content + "\n");
+				}
+				catch (Exception e)
+				{
+					_backlog.Add(prefix + "Could not write to log file\n" + e + "\n");
+					_backlog.Add(prefix + content + "\n");
+					retryBacklog = true;
+				}
+			}
 
-            if (!retryBacklog)
-                return;
+			if (!retryBacklog)
+				return;
 
-            Thread.Sleep(250);
-            lock (Sync)
-            {
-                ProcessBacklog();
-            }
-        }
+			Thread.Sleep(250);
+			lock (Sync)
+			{
+				ProcessBacklog();
+			}
+		}
 
-        private static void AppendToLogRaw(string text)
-        {
-            System.Diagnostics.Debug.WriteLine(text);
-            File.AppendAllText(Config.Path.LogFile, text, Encoding.UTF8);
-        }
+		private static void AppendToLogRaw(string text)
+		{
+			System.Diagnostics.Debug.WriteLine(text);
+			File.AppendAllText(Config.Path.LogFile, text, Encoding.UTF8);
+		}
 
-        private static void ProcessBacklog()
-        {
-            var newBacklog = new List<string>();
+		private static void ProcessBacklog()
+		{
+			var newBacklog = new List<string>();
 
-            foreach (var text in _backlog)
-            {
-                try
-                {
-                    AppendToLogRaw(text);
-                }
-                catch
-                {
-                    newBacklog.Add(text);
-                }
-            }
+			foreach (var text in _backlog)
+			{
+				try
+				{
+					AppendToLogRaw(text);
+				}
+				catch
+				{
+					newBacklog.Add(text);
+				}
+			}
 
-            _backlog = newBacklog;
-        }
-    }
+			_backlog = newBacklog;
+		}
+	}
 }

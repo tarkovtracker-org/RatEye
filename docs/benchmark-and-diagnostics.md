@@ -63,7 +63,7 @@ Supported `scanType` values are:
 runner compares it with detected IDs and exits with code 2 if any fixture
 mismatches. Exit code 1 indicates invalid input or runner failure.
 
-## Running
+## Running (Windows x64)
 
 ```bat
 dotnet run --project RatEye.Benchmarks -- ^
@@ -76,11 +76,11 @@ dotnet run --project RatEye.Benchmarks -- ^
 ```
 
 The runner searches recursively for `*.ratdiag.json`. `--icons` is needed for
-template matching. `--traineddata` is needed for inspection OCR, explicit icon
-OCR mode, and the exact-short-name verification used by low-confidence
-template matches. Without traineddata, template matching still runs but cannot
-perform that verification. The report records detections, confidences,
-expected-result status, and timings such as marker search, OCR
+template matching. `--traineddata` is needed for inspection OCR and the
+exact-short-name verification used by low-confidence template matches. Without
+traineddata, template matching still runs but cannot perform that verification.
+The report records detections, confidences, expected-result status, and timings
+such as marker search, OCR
 preprocessing/recognition, item matching, inventory grid detection/parsing,
 icon template matching, and `icon.ocr_verify`.
 

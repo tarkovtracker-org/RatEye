@@ -9,6 +9,7 @@ namespace RatEye
 	/// </summary>
 	public class RatEyeEngine : System.IDisposable
 	{
+		private readonly object _lifecycleSync = new object();
 		private bool _disposed;
 
 		/// <summary>
@@ -40,7 +41,11 @@ namespace RatEye
 		/// <param name="image">The image to process</param>
 		public MultiInspection NewMultiInspection(Bitmap image)
 		{
-			return new MultiInspection(image, Config);
+			lock (_lifecycleSync)
+			{
+				ThrowIfDisposed();
+				return new MultiInspection(image, Config);
+			}
 		}
 
 		/// <summary>
@@ -49,7 +54,11 @@ namespace RatEye
 		/// <param name="image">The image to process</param>
 		public Inspection NewInspection(Bitmap image)
 		{
-			return new Inspection(image, Config);
+			lock (_lifecycleSync)
+			{
+				ThrowIfDisposed();
+				return new Inspection(image, Config);
+			}
 		}
 
 		/// <summary>
@@ -58,7 +67,11 @@ namespace RatEye
 		/// <param name="image">The image to process</param>
 		public Inventory NewInventory(Bitmap image)
 		{
-			return new Inventory(image, Config);
+			lock (_lifecycleSync)
+			{
+				ThrowIfDisposed();
+				return new Inventory(image, Config);
+			}
 		}
 
 		/// <summary>
@@ -69,7 +82,17 @@ namespace RatEye
 		/// <param name="size">Size of the detected item region.</param>
 		public Processing.Icon NewIcon(Bitmap image, Vector2 position, Vector2 size)
 		{
-			return new Processing.Icon(image, position, size, Config, ownsIcon: false);
+			lock (_lifecycleSync)
+			{
+				ThrowIfDisposed();
+				return new Processing.Icon(image, position, size, Config, ownsIcon: false);
+			}
+		}
+
+		private void ThrowIfDisposed()
+		{
+			if (_disposed)
+				throw new System.ObjectDisposedException(nameof(RatEyeEngine));
 		}
 
 		/// <summary>
@@ -77,28 +100,27 @@ namespace RatEye
 		/// </summary>
 		public void Dispose()
 		{
-			if (_disposed)
-				return;
+			lock (_lifecycleSync)
+			{
+				if (_disposed)
+					return;
+				_disposed = true;
 
-			Config.IconManager?.Dispose();
-			Config.IconManager = null;
-			lock (Config.ProcessingConfig.InspectionConfig.TesseractSync)
-			{
-				Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
-				Config.ProcessingConfig.InspectionConfig.TesseractEngine = null;
+				Config.IconManager?.Dispose();
+				Config.IconManager = null;
+				lock (Config.ProcessingConfig.InspectionConfig.TesseractSync)
+				{
+					Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
+					Config.ProcessingConfig.InspectionConfig.TesseractEngine = null;
+				}
+				lock (Config.ProcessingConfig.IconConfig.TesseractSync)
+				{
+					Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();
+					Config.ProcessingConfig.IconConfig.TesseractEngine = null;
+				}
+				Config.ProcessingConfig.InspectionConfig.DisposeMarker();
+				System.GC.SuppressFinalize(this);
 			}
-			lock (Config.ProcessingConfig.IconConfig.TesseractSync)
-			{
-				Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();
-				Config.ProcessingConfig.IconConfig.TesseractEngine = null;
-			}
-			lock (Config.ProcessingConfig.InspectionConfig.MarkerSync)
-			{
-				Config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
-				Config.ProcessingConfig.InspectionConfig.Marker = null;
-			}
-			_disposed = true;
-			System.GC.SuppressFinalize(this);
 		}
 	}
 }

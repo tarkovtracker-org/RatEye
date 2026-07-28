@@ -26,7 +26,10 @@ jobs:
       - name: Restore
         run: dotnet restore RatEye.sln
 
-      - name: Build
+      - name: Build Debug
+        run: dotnet build RatEye.sln -c Debug --no-restore
+
+      - name: Build Release
         run: dotnet build RatEye.sln -c Release --no-restore
 
       - name: Test

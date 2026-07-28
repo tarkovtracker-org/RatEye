@@ -1,13 +1,18 @@
 using System;
 using System.Collections.Generic;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 
 namespace RatEye.Diagnostics
 {
 	/// <summary>
 	/// Versioned, application-neutral description of a captured scan that RatEye can replay.
 	/// </summary>
+	[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 	public sealed class ScanReplayManifest
 	{
+		private List<string> _expectedItemIds = new List<string>();
+
 		/// <summary>
 		/// Current replay contract version.
 		/// </summary>
@@ -36,7 +41,11 @@ namespace RatEye.Diagnostics
 		/// <summary>
 		/// Optional expected item identifiers used for regression assertions.
 		/// </summary>
-		public List<string> ExpectedItemIds { get; set; } = new List<string>();
+		public List<string> ExpectedItemIds
+		{
+			get => _expectedItemIds;
+			set => _expectedItemIds = value ?? new List<string>();
+		}
 
 		/// <summary>
 		/// RatEye processing settings required to replay the capture.
@@ -57,6 +66,7 @@ namespace RatEye.Diagnostics
 	/// <summary>
 	/// RatEye processing settings stored with a replay.
 	/// </summary>
+	[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 	public sealed class ScanReplayConfiguration
 	{
 		public float Scale { get; set; } = 1;
@@ -71,6 +81,7 @@ namespace RatEye.Diagnostics
 	/// <summary>
 	/// Host capture coordinates and environment facts used to reproduce geometry.
 	/// </summary>
+	[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 	public sealed class ScanReplayContext
 	{
 		public DateTime CapturedAtUtc { get; set; }
@@ -91,6 +102,7 @@ namespace RatEye.Diagnostics
 	/// <summary>
 	/// Result observed during the original host scan.
 	/// </summary>
+	[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 	public sealed class ScanReplayObservedResult
 	{
 		public List<string> ItemIds { get; set; } = new List<string>();

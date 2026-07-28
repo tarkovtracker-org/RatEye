@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Linq;
+using System.Threading.Tasks;
 using OpenCvSharp;
 using RatEye;
 using Xunit;
@@ -246,14 +247,39 @@ public class ProcessingRegressionTests
 	public void Inspection_marker_is_loaded_only_when_processing_needs_it()
 	{
 		Config config = new();
-		Assert.Null(config.ProcessingConfig.InspectionConfig.Marker);
+		Assert.False(config.ProcessingConfig.InspectionConfig.IsMarkerLoaded);
 
 		using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
-		Assert.Null(config.ProcessingConfig.InspectionConfig.Marker);
+		Assert.False(config.ProcessingConfig.InspectionConfig.IsMarkerLoaded);
 
 		using Bitmap scaledMarker = RatEye.Processing.Inspection.GetScaledMarker(config);
-		Assert.NotNull(config.ProcessingConfig.InspectionConfig.Marker);
+		Assert.True(config.ProcessingConfig.InspectionConfig.IsMarkerLoaded);
 		Assert.NotSame(config.ProcessingConfig.InspectionConfig.Marker, scaledMarker);
+	}
+
+	[Fact]
+	public void Public_inspection_marker_getter_preserves_the_non_null_default()
+	{
+		Config.Processing.Inspection inspection = new();
+
+		Bitmap marker = inspection.Marker;
+
+		Assert.NotNull(marker);
+		Assert.True(inspection.IsMarkerLoaded);
+		inspection.DisposeMarker();
+	}
+
+	[Fact]
+	public void Scaled_marker_has_an_independent_lifetime_from_engine_disposal()
+	{
+		Config config = new();
+		RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		using Bitmap scaledMarker = RatEye.Processing.Inspection.GetScaledMarker(config);
+
+		engine.Dispose();
+
+		Assert.True(scaledMarker.Width > 0);
+		Assert.True(scaledMarker.Height > 0);
 	}
 
 	[Fact]
@@ -283,6 +309,33 @@ public class ProcessingRegressionTests
 		Assert.NotNull(config.IconManager);
 
 		engine.Dispose();
+
+		Assert.Null(config.IconManager);
+	}
+
+	[Fact]
+	public void Engine_factories_fail_immediately_after_disposal()
+	{
+		Config config = new();
+		RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		using Bitmap source = new(16, 16);
+		engine.Dispose();
+
+		Assert.Throws<ObjectDisposedException>(() => engine.NewInspection(source));
+		Assert.Throws<ObjectDisposedException>(() => engine.NewMultiInspection(source));
+		Assert.Throws<ObjectDisposedException>(() => engine.NewInventory(source));
+		Assert.Throws<ObjectDisposedException>(() =>
+			engine.NewIcon(source, Vector2.Zero, new Vector2(16, 16))
+		);
+	}
+
+	[Fact]
+	public void Concurrent_engine_disposal_is_idempotent()
+	{
+		Config config = new();
+		RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+
+		Parallel.Invoke(engine.Dispose, engine.Dispose);
 
 		Assert.Null(config.IconManager);
 	}

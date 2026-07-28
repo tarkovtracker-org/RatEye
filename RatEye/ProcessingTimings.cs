@@ -42,7 +42,8 @@ namespace RatEye
 					_stageMilliseconds.Add(stage, milliseconds);
 			}
 
-			Logger.LogDebug($"Timing {stage}: {milliseconds:F3} ms");
+			if (Config.LogDebug)
+				Logger.LogDebug($"Timing {stage}: {milliseconds:F3} ms");
 		}
 	}
 }

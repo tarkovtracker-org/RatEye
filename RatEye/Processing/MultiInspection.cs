@@ -137,24 +137,56 @@ namespace RatEye.Processing
 
 			float effectiveThreshold = float.IsNaN(threshold)
 				? 1f
-				: Math.Max(threshold, -0.999999f);
-			long maxPeaks = (long)response.Rows * response.Cols;
-			while (matches.Count < maxPeaks)
+				: Math.Max(threshold, -1f);
+			var candidates = new List<(Point location, float confidence)>();
+			Mat.UnsafeIndexer<float> responseIndexer =
+				response.GetUnsafeGenericIndexer<float>();
+			int rows = response.Rows;
+			int columns = response.Cols;
+			for (int row = 0; row < rows; row++)
 			{
-				Cv2.MinMaxLoc(response, out _, out double maxValue, out _, out Point maxLocation);
-				if (double.IsNaN(maxValue) || maxValue < effectiveThreshold)
-					break;
+				for (int column = 0; column < columns; column++)
+				{
+					float confidence = responseIndexer[row, column];
+					if (!float.IsNaN(confidence) && confidence >= effectiveThreshold)
+						candidates.Add((new Point(column, row), confidence));
+				}
+			}
+			candidates.Sort(
+				(left, right) =>
+				{
+					int confidenceOrder = right.confidence.CompareTo(left.confidence);
+					if (confidenceOrder != 0)
+						return confidenceOrder;
+					int rowOrder = left.location.Y.CompareTo(right.location.Y);
+					return rowOrder != 0
+						? rowOrder
+						: left.location.X.CompareTo(right.location.X);
+				}
+			);
 
-				matches.Add((new Vector2(maxLocation), (float)maxValue));
+			using var suppressed = new Mat(
+				rows,
+				columns,
+				MatType.CV_8UC1,
+				Scalar.All(0)
+			);
+			Mat.UnsafeIndexer<byte> suppressionIndexer =
+				suppressed.GetUnsafeGenericIndexer<byte>();
+			foreach ((Point location, float confidence) in candidates)
+			{
+				if (suppressionIndexer[location.Y, location.X] != 0)
+					continue;
 
-				int left = Math.Max(0, maxLocation.X - markerSize.Width / 2);
-				int top = Math.Max(0, maxLocation.Y - markerSize.Height / 2);
-				int right = Math.Min(response.Width, maxLocation.X + markerSize.Width / 2 + 1);
-				int bottom = Math.Min(response.Height, maxLocation.Y + markerSize.Height / 2 + 1);
-				using Mat suppressionRegion = response[
+				matches.Add((new Vector2(location), confidence));
+				int left = Math.Max(0, location.X - markerSize.Width / 2);
+				int top = Math.Max(0, location.Y - markerSize.Height / 2);
+				int right = Math.Min(response.Width, location.X + markerSize.Width / 2 + 1);
+				int bottom = Math.Min(response.Height, location.Y + markerSize.Height / 2 + 1);
+				using Mat suppressionRegion = suppressed[
 					new Rect(left, top, right - left, bottom - top)
 				];
-				suppressionRegion.SetTo(Scalar.All(-1));
+				suppressionRegion.SetTo(Scalar.All(1));
 			}
 
 			return matches;

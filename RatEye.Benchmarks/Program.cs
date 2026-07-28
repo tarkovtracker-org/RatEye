@@ -5,67 +5,82 @@ using RatEye;
 using RatEye.Diagnostics;
 using RatStash;
 
-Dictionary<string, string> options = ParseOptions(args);
-string fixtureDirectory = GetOption(options, "fixtures", "RATEYE_FIXTURES");
-string itemsPath = GetOption(options, "items", "RATEYE_ITEMS");
-string localePath = GetOption(options, "locale", "RATEYE_LOCALE");
-string iconsPath = GetOption(options, "icons", "RATEYE_ICONS", required: false);
-string trainedDataPath = GetOption(options, "traineddata", "RATEYE_TRAINEDDATA", required: false);
-
-if (!Directory.Exists(fixtureDirectory))
-	return Fail($"Fixture directory does not exist: {fixtureDirectory}");
-if (!File.Exists(itemsPath))
-	return Fail($"Item database does not exist: {itemsPath}");
-if (!File.Exists(localePath))
-	return Fail($"Locale database does not exist: {localePath}");
-
-string[] manifestPaths = Directory.GetFiles(
-	fixtureDirectory,
-	"*.ratdiag.json",
-	SearchOption.AllDirectories
-);
-if (manifestPaths.Length == 0)
-	return Fail($"No *.ratdiag.json manifests found under {fixtureDirectory}");
-
-Database database = Database.FromFile(itemsPath, false, localePath);
-List<BenchmarkCaseReport> cases = new();
-foreach (
-	string manifestPath in manifestPaths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-)
+try
 {
-	ScanReplayManifest manifest =
-		JsonConvert.DeserializeObject<ScanReplayManifest>(File.ReadAllText(manifestPath))
-		?? throw new InvalidDataException($"Unable to deserialize {manifestPath}");
-
-	cases.Add(
-		RunCase(
-			fixtureDirectory,
-			manifestPath,
-			manifest,
-			database,
-			iconsPath,
-			trainedDataPath
-		)
-	);
+	return RunBenchmark(args);
+}
+catch (Exception exception)
+{
+	return Fail(exception.Message);
 }
 
-BenchmarkReport report = new()
+static int RunBenchmark(string[] arguments)
 {
-	SchemaVersion = 1,
-	GeneratedAtUtc = DateTime.UtcNow,
-	FixtureDirectory = Path.GetFullPath(fixtureDirectory),
-	Cases = cases,
-};
+	Dictionary<string, string> options = ParseOptions(arguments);
+	string fixtureDirectory = GetOption(options, "fixtures", "RATEYE_FIXTURES");
+	string itemsPath = GetOption(options, "items", "RATEYE_ITEMS");
+	string localePath = GetOption(options, "locale", "RATEYE_LOCALE");
+	string iconsPath = GetOption(options, "icons", "RATEYE_ICONS", required: false);
+	string trainedDataPath = GetOption(options, "traineddata", "RATEYE_TRAINEDDATA", required: false);
 
-string outputPath = options.TryGetValue("output", out string? configuredOutput)
-	? Path.GetFullPath(configuredOutput)
-	: Path.Combine(fixtureDirectory, "rateye-benchmark-report.json");
-File.WriteAllText(outputPath, JsonConvert.SerializeObject(report, Formatting.Indented));
+	if (!Directory.Exists(fixtureDirectory))
+		return Fail($"Fixture directory does not exist: {fixtureDirectory}");
+	if (!File.Exists(itemsPath))
+		return Fail($"Item database does not exist: {itemsPath}");
+	if (!File.Exists(localePath))
+		return Fail($"Locale database does not exist: {localePath}");
 
-int matched = cases.Count(result => result.MatchesExpected != false);
-Console.WriteLine($"Wrote {cases.Count} case(s) to {outputPath}");
-Console.WriteLine($"Expected-result matches: {matched}/{cases.Count}");
-return matched == cases.Count ? 0 : 2;
+	string[] manifestPaths = Directory.GetFiles(
+		fixtureDirectory,
+		"*.ratdiag.json",
+		SearchOption.AllDirectories
+	);
+	if (manifestPaths.Length == 0)
+		return Fail($"No *.ratdiag.json manifests found under {fixtureDirectory}");
+
+	Database database = Database.FromFile(itemsPath, false, localePath);
+	List<BenchmarkCaseReport> cases = new();
+	foreach (
+		string manifestPath in manifestPaths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+	)
+	{
+		ScanReplayManifest manifest =
+			JsonConvert.DeserializeObject<ScanReplayManifest>(File.ReadAllText(manifestPath))
+			?? throw new InvalidDataException($"Unable to deserialize {manifestPath}");
+
+		cases.Add(
+			RunCase(
+				fixtureDirectory,
+				manifestPath,
+				manifest,
+				database,
+				iconsPath,
+				trainedDataPath
+			)
+		);
+	}
+
+	BenchmarkReport report = new()
+	{
+		SchemaVersion = 1,
+		GeneratedAtUtc = DateTime.UtcNow,
+		FixtureDirectory = Path.GetFullPath(fixtureDirectory),
+		Cases = cases,
+	};
+
+	string outputPath = options.TryGetValue("output", out string? configuredOutput)
+		? Path.GetFullPath(configuredOutput)
+		: Path.Combine(fixtureDirectory, "rateye-benchmark-report.json");
+	File.WriteAllText(outputPath, JsonConvert.SerializeObject(report, Formatting.Indented));
+
+	int asserted = cases.Count(result => result.MatchesExpected.HasValue);
+	int matched = cases.Count(result => result.MatchesExpected == true);
+	Console.WriteLine($"Wrote {cases.Count} case(s) to {outputPath}");
+	Console.WriteLine(
+		$"Expected-result matches: {matched}/{asserted} asserted; {cases.Count - asserted} unasserted"
+	);
+	return cases.Any(result => result.MatchesExpected == false) ? 2 : 0;
+}
 
 static BenchmarkCaseReport RunCase(
 	string fixtureDirectory,
@@ -110,27 +125,8 @@ static BenchmarkCaseReport RunCase(
 	switch (manifest.ScanType.Trim().ToLowerInvariant())
 	{
 		case "inspection":
-		{
-			RatEye.Processing.Inspection inspection = engine.NewInspection(image);
-			RatStash.Item? item = inspection.Item;
-			detections.Add(
-				new BenchmarkDetection
-				{
-					ItemId = item?.Id,
-					ItemName = item?.Name,
-					Confidence = inspection.ItemConfidence,
-					MarkerConfidence = inspection.MarkerConfidence,
-				}
-			);
-			AddTimings(timings, inspection.Timings.Snapshot());
-			break;
-		}
-		case "multi-inspection":
-		{
-			RatEye.Processing.MultiInspection multi = engine.NewMultiInspection(image);
-			int index = 0;
-			foreach (RatEye.Processing.Inspection inspection in multi.Inspections)
 			{
+				RatEye.Processing.Inspection inspection = engine.NewInspection(image);
 				RatStash.Item? item = inspection.Item;
 				detections.Add(
 					new BenchmarkDetection
@@ -141,22 +137,62 @@ static BenchmarkCaseReport RunCase(
 						MarkerConfidence = inspection.MarkerConfidence,
 					}
 				);
-				AddTimings(timings, inspection.Timings.Snapshot(), $"inspection[{index}].");
-				index++;
+				AddTimings(timings, inspection.Timings.Snapshot());
+				break;
 			}
-			AddTimings(timings, multi.Timings.Snapshot());
-			break;
-		}
-		case "inventory":
-		{
-			using RatEye.Processing.Inventory inventory = engine.NewInventory(image);
-			Vector2? cursor =
-				manifest.Context.CursorX.HasValue && manifest.Context.CursorY.HasValue
-					? new Vector2(manifest.Context.CursorX.Value, manifest.Context.CursorY.Value)
-					: null;
-			RatEye.Processing.Icon? icon = inventory.LocateIcon(cursor);
-			if (icon is not null)
+		case "multi-inspection":
 			{
+				RatEye.Processing.MultiInspection multi = engine.NewMultiInspection(image);
+				int index = 0;
+				foreach (RatEye.Processing.Inspection inspection in multi.Inspections)
+				{
+					RatStash.Item? item = inspection.Item;
+					detections.Add(
+						new BenchmarkDetection
+						{
+							ItemId = item?.Id,
+							ItemName = item?.Name,
+							Confidence = inspection.ItemConfidence,
+							MarkerConfidence = inspection.MarkerConfidence,
+						}
+					);
+					AddTimings(timings, inspection.Timings.Snapshot(), $"inspection[{index}].");
+					index++;
+				}
+				AddTimings(timings, multi.Timings.Snapshot());
+				break;
+			}
+		case "inventory":
+			{
+				using RatEye.Processing.Inventory inventory = engine.NewInventory(image);
+				Vector2? cursor =
+					manifest.Context.CursorX.HasValue && manifest.Context.CursorY.HasValue
+						? new Vector2(manifest.Context.CursorX.Value, manifest.Context.CursorY.Value)
+						: null;
+				RatEye.Processing.Icon? icon = inventory.LocateIcon(cursor);
+				if (icon is not null)
+				{
+					RatStash.Item? item = icon.Item;
+					detections.Add(
+						new BenchmarkDetection
+						{
+							ItemId = item?.Id,
+							ItemName = item?.Name,
+							Confidence = icon.DetectionConfidence,
+						}
+					);
+					AddTimings(timings, icon.Timings.Snapshot());
+				}
+				AddTimings(timings, inventory.Timings.Snapshot());
+				break;
+			}
+		case "icon":
+			{
+				using RatEye.Processing.Icon icon = engine.NewIcon(
+					image,
+					Vector2.Zero,
+					new Vector2(image.Width, image.Height)
+				);
 				RatStash.Item? item = icon.Item;
 				detections.Add(
 					new BenchmarkDetection
@@ -167,29 +203,8 @@ static BenchmarkCaseReport RunCase(
 					}
 				);
 				AddTimings(timings, icon.Timings.Snapshot());
+				break;
 			}
-			AddTimings(timings, inventory.Timings.Snapshot());
-			break;
-		}
-		case "icon":
-		{
-			using RatEye.Processing.Icon icon = engine.NewIcon(
-				image,
-				Vector2.Zero,
-				new Vector2(image.Width, image.Height)
-			);
-			RatStash.Item? item = icon.Item;
-			detections.Add(
-				new BenchmarkDetection
-				{
-					ItemId = item?.Id,
-					ItemName = item?.Name,
-					Confidence = icon.DetectionConfidence,
-				}
-			);
-			AddTimings(timings, icon.Timings.Snapshot());
-			break;
-		}
 		default:
 			throw new InvalidDataException(
 				$"Unsupported scan type '{manifest.ScanType}' in {manifestPath}."
@@ -218,7 +233,7 @@ static BenchmarkCaseReport RunCase(
 		Id = string.IsNullOrWhiteSpace(manifest.Id)
 			? Path.GetFileNameWithoutExtension(manifestPath)
 			: manifest.Id,
-		Manifest = Path.GetRelativePath(Path.GetDirectoryName(manifestPath)!, manifestPath),
+		Manifest = Path.GetRelativePath(fixtureDirectory, manifestPath),
 		ScanType = manifest.ScanType,
 		ExpectedItemIds = manifest.ExpectedItemIds,
 		Detections = detections,

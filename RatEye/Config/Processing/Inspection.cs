@@ -5,132 +5,169 @@ using Tesseract;
 
 namespace RatEye
 {
-    public partial class Config
-    {
-        public partial class Processing
-        {
-            /// <summary>
-            /// The Inspection class contains parameters, used by the inspection processing module
-            /// </summary>
-            public class Inspection
-            {
-                /// <summary>
-                /// Marker bitmap to identify regions of interest. This should be a cropped image of the magnifier icon
-                /// </summary>
-                public Bitmap Marker;
-                internal readonly object MarkerSync = new();
+	public partial class Config
+	{
+		public partial class Processing
+		{
+			/// <summary>
+			/// The Inspection class contains parameters, used by the inspection processing module
+			/// </summary>
+			public class Inspection
+			{
+				private Bitmap _marker;
 
-                /// <summary>
-                /// Detection threshold of the marker bitmap
-                /// </summary>
-                public float MarkerThreshold = 0.82f;
+				/// <summary>
+				/// Marker bitmap to identify regions of interest. This should be a cropped image of the magnifier icon.
+				/// The embedded default is loaded on first access.
+				/// </summary>
+				public Bitmap Marker
+				{
+					get
+					{
+						lock (MarkerSync)
+						{
+							return _marker ??= LoadMarker();
+						}
+					}
+					set
+					{
+						lock (MarkerSync)
+						{
+							_marker = value;
+						}
+					}
+				}
+				internal readonly object MarkerSync = new();
 
-                /// <summary>
-                /// Minimum OCR-to-item-name similarity required to accept a match.
-                /// <para>
-                /// Prevents weak fuzzy matches from inventory chrome (for example the
-                /// "Subject Search" bar, whose magnifier resembles the inspect marker)
-                /// from being reported as items.
-                /// </para>
-                /// </summary>
-                public float MinItemConfidence = 0.55f;
+				/// <summary>
+				/// Detection threshold of the marker bitmap
+				/// </summary>
+				public float MarkerThreshold = 0.82f;
 
-                /// <summary>
-                /// The scale of the marker used by item inspection windows
-                /// </summary>
-                public float MarkerItemScale = 16f / 28f;
+				/// <summary>
+				/// Minimum OCR-to-item-name similarity required to accept a match.
+				/// <para>
+				/// Prevents weak fuzzy matches from inventory chrome (for example the
+				/// "Subject Search" bar, whose magnifier resembles the inspect marker)
+				/// from being reported as items.
+				/// </para>
+				/// </summary>
+				public float MinItemConfidence = 0.55f;
 
-                /// <summary>
-                /// The background color used for the marker if it uses a alpha channel
-                /// </summary>
-                public Color MarkerBackgroundColor = Color.FromArgb(25, 27, 27);
+				/// <summary>
+				/// The scale of the marker used by item inspection windows
+				/// </summary>
+				public float MarkerItemScale = 16f / 28f;
 
-                /// <summary>
-                /// Unscaled width of the box which will be searched for the title
-                /// </summary>
-                public int BaseTitleSearchWidth = 500;
+				/// <summary>
+				/// The background color used for the marker if it uses a alpha channel
+				/// </summary>
+				public Color MarkerBackgroundColor = Color.FromArgb(25, 27, 27);
 
-                /// <summary>
-                /// Unscaled height of the box which will be searched for the title
-                /// </summary>
-                public int BaseTitleSearchHeight = 17;
+				/// <summary>
+				/// Unscaled width of the box which will be searched for the title
+				/// </summary>
+				public int BaseTitleSearchWidth = 500;
 
-                /// <summary>
-                /// Right padding of the title search box, used when the close button got detected
-                /// <para>
-                /// This helps to ignore extra buttons like the sort buttons in some container inspection windows.
-                /// </para>
-                /// See <see cref="CloseButtonColorLowerBound"/> and <see cref="CloseButtonColorUpperBound"/>.
-                /// </summary>
-                public int BaseTitleSearchRightPadding = 64;
+				/// <summary>
+				/// Unscaled height of the box which will be searched for the title
+				/// </summary>
+				public int BaseTitleSearchHeight = 17;
 
-                /// <summary>
-                /// The horizontal offset factor of the box which will be searched for the title
-                /// <para>
-                /// The factor is applied to the scaled width of the <see cref="Marker"/>.
-                /// The horizontal offset is originating from the left most edge of the detected marker.
-                /// <code>searchBox.left = detectedMarker.left + (Marker.width * Scale)</code>
-                /// </para>
-                /// </summary>
-                public float HorizontalTitleSearchOffsetFactor = 1.2f;
+				/// <summary>
+				/// Right padding of the title search box, used when the close button got detected
+				/// <para>
+				/// This helps to ignore extra buttons like the sort buttons in some container inspection windows.
+				/// </para>
+				/// See <see cref="CloseButtonColorLowerBound"/> and <see cref="CloseButtonColorUpperBound"/>.
+				/// </summary>
+				public int BaseTitleSearchRightPadding = 64;
 
-                /// <summary>
-                /// Lower bound color to match the close button which is positioned at the top right of inspection windows
-                /// </summary>
-                public Color CloseButtonColorLowerBound = Color.FromArgb(50, 10, 10);
+				/// <summary>
+				/// The horizontal offset factor of the box which will be searched for the title
+				/// <para>
+				/// The factor is applied to the scaled width of the <see cref="Marker"/>.
+				/// The horizontal offset is originating from the left most edge of the detected marker.
+				/// <code>searchBox.left = detectedMarker.left + (Marker.width * Scale)</code>
+				/// </para>
+				/// </summary>
+				public float HorizontalTitleSearchOffsetFactor = 1.2f;
 
-                /// <summary>
-                /// Upper bound color to match the close button which is positioned at the top right of inspection windows
-                /// </summary>
-                public Color CloseButtonColorUpperBound = Color.FromArgb(80, 15, 15);
+				/// <summary>
+				/// Lower bound color to match the close button which is positioned at the top right of inspection windows
+				/// </summary>
+				public Color CloseButtonColorLowerBound = Color.FromArgb(50, 10, 10);
 
-                /// <summary>
-                /// Tesseract Engine instance used and set by <see cref="RatEye.Processing.Inspection"/>
-                /// </summary>
-                internal TesseractEngine TesseractEngine;
-                internal readonly object TesseractSync = new();
+				/// <summary>
+				/// Upper bound color to match the close button which is positioned at the top right of inspection windows
+				/// </summary>
+				public Color CloseButtonColorUpperBound = Color.FromArgb(80, 15, 15);
 
-                /// <summary>
-                /// Create a new inspection config instance
-                /// </summary>
-                public Inspection() { }
+				/// <summary>
+				/// Tesseract Engine instance used and set by <see cref="RatEye.Processing.Inspection"/>
+				/// </summary>
+				internal TesseractEngine TesseractEngine;
+				internal readonly object TesseractSync = new();
 
-                private static Bitmap LoadMarker()
-                {
-                    using var stream = new MemoryStream(Resources.icon_search);
-                    using var marker = new Bitmap(stream);
-                    return new Bitmap(marker);
-                }
+				/// <summary>
+				/// Create a new inspection config instance
+				/// </summary>
+				public Inspection() { }
 
-                internal void EnsureMarker()
-                {
-                    if (Marker != null)
-                        return;
+				private static Bitmap LoadMarker()
+				{
+					using var stream = new MemoryStream(Resources.icon_search);
+					using var marker = new Bitmap(stream);
+					return new Bitmap(marker);
+				}
 
-                    lock (MarkerSync)
-                    {
-                        Marker ??= LoadMarker();
-                    }
-                }
+				internal bool IsMarkerLoaded
+				{
+					get
+					{
+						lock (MarkerSync)
+						{
+							return _marker != null;
+						}
+					}
+				}
 
-                internal string GetHash()
-                {
-                    var components = new string[]
-                    {
-                        MarkerThreshold.ToString(),
-                        MinItemConfidence.ToString(),
-                        MarkerItemScale.ToString(),
-                        MarkerBackgroundColor.ToString(),
-                        BaseTitleSearchWidth.ToString(),
-                        BaseTitleSearchHeight.ToString(),
-                        BaseTitleSearchRightPadding.ToString(),
-                        HorizontalTitleSearchOffsetFactor.ToString(),
-                        CloseButtonColorLowerBound.ToString(),
-                        CloseButtonColorUpperBound.ToString(),
-                    };
-                    return string.Join("<#sep#>", components).SHA256Hash();
-                }
-            }
-        }
-    }
+				internal Bitmap CloneMarker()
+				{
+					lock (MarkerSync)
+					{
+						_marker ??= LoadMarker();
+						return new Bitmap(_marker);
+					}
+				}
+
+				internal void DisposeMarker()
+				{
+					lock (MarkerSync)
+					{
+						_marker?.Dispose();
+						_marker = null;
+					}
+				}
+
+				internal string GetHash()
+				{
+					var components = new string[]
+					{
+						MarkerThreshold.ToString(),
+						MinItemConfidence.ToString(),
+						MarkerItemScale.ToString(),
+						MarkerBackgroundColor.ToString(),
+						BaseTitleSearchWidth.ToString(),
+						BaseTitleSearchHeight.ToString(),
+						BaseTitleSearchRightPadding.ToString(),
+						HorizontalTitleSearchOffsetFactor.ToString(),
+						CloseButtonColorLowerBound.ToString(),
+						CloseButtonColorUpperBound.ToString(),
+					};
+					return string.Join("<#sep#>", components).SHA256Hash();
+				}
+			}
+		}
+	}
 }
