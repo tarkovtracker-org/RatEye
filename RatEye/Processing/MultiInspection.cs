@@ -179,10 +179,10 @@ namespace RatEye.Processing
 					continue;
 
 				matches.Add((new Vector2(location), confidence));
-				int left = Math.Max(0, location.X - markerSize.Width / 2);
-				int top = Math.Max(0, location.Y - markerSize.Height / 2);
-				int right = Math.Min(response.Width, location.X + markerSize.Width / 2 + 1);
-				int bottom = Math.Min(response.Height, location.Y + markerSize.Height / 2 + 1);
+				int left = Math.Max(0, location.X - markerSize.Width + 1);
+				int top = Math.Max(0, location.Y - markerSize.Height + 1);
+				int right = Math.Min(response.Width, location.X + markerSize.Width);
+				int bottom = Math.Min(response.Height, location.Y + markerSize.Height);
 				using Mat suppressionRegion = suppressed[
 					new Rect(left, top, right - left, bottom - top)
 				];

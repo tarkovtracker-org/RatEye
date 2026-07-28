@@ -1,5 +1,7 @@
 using System;
 using System.Drawing;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using OpenCvSharp;
@@ -168,6 +170,27 @@ public class ProcessingRegressionTests
 		Assert.Equal(2, inventory.Icons.Count());
 		Assert.NotNull(inventory.LocateIcon(new Vector2(53, 79)));
 		Assert.NotNull(inventory.LocateIcon(new Vector2(137, 79)));
+		RatEye.Processing.Icon first = inventory.Icons.First();
+		Assert.Same(first, inventory.LocateIcon(first.Position));
+	}
+
+	[Fact]
+	public void Highlighted_inventory_accepts_small_positive_scales()
+	{
+		using Bitmap source = new(16, 16);
+		Config config = new()
+		{
+			ProcessingConfig = new Config.Processing
+			{
+				Scale = 0.25f,
+				InventoryConfig = new Config.Processing.Inventory { OptimizeHighlighted = true },
+			},
+		};
+
+		using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		using RatEye.Processing.Inventory inventory = engine.NewInventory(source);
+
+		Assert.Empty(inventory.Icons);
 	}
 
 	[Fact]
@@ -213,8 +236,9 @@ public class ProcessingRegressionTests
 	{
 		using Mat response = new(5, 15, MatType.CV_32FC1, Scalar.All(0));
 		response.Set(2, 2, 0.99f);
+		response.Set(2, 1, 0.98f);
 		response.Set(2, 3, 0.98f);
-		response.Set(2, 12, 0.97f);
+		response.Set(2, 7, 0.97f);
 
 		var matches = RatEye.Processing.MultiInspection.ExtractMarkerPeaks(
 			response,
@@ -225,8 +249,55 @@ public class ProcessingRegressionTests
 		Assert.Equal(2, matches.Count);
 		Assert.Equal(new Vector2(2, 2), matches[0].position);
 		Assert.Equal(0.99f, matches[0].confidence);
-		Assert.Equal(new Vector2(12, 2), matches[1].position);
+		Assert.Equal(new Vector2(7, 2), matches[1].position);
 		Assert.Equal(0.97f, matches[1].confidence);
+	}
+
+	[Fact]
+	public void Config_hash_is_stable_across_current_cultures()
+	{
+		CultureInfo original = CultureInfo.CurrentCulture;
+		try
+		{
+			Config config = new();
+			CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
+			string englishHash = config.GetHash();
+			CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+
+			Assert.Equal(englishHash, config.GetHash());
+		}
+		finally
+		{
+			CultureInfo.CurrentCulture = original;
+		}
+	}
+
+	[Fact]
+	public void Concurrent_debug_bitmap_writes_allocate_unique_files()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-debug-test-" + Guid.NewGuid().ToString("N")
+		);
+		try
+		{
+			Parallel.For(
+				0,
+				8,
+				_ =>
+				{
+					using Bitmap bitmap = new(4, 4);
+					Logger.SaveDebugBitmap(bitmap, root, "shared");
+				}
+			);
+
+			Assert.Equal(8, Directory.GetFiles(root, "shared(*).png").Length);
+		}
+		finally
+		{
+			if (Directory.Exists(root))
+				Directory.Delete(root, recursive: true);
+		}
 	}
 
 	[Fact]

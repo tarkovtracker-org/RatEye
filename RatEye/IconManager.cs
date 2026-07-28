@@ -107,6 +107,8 @@ namespace RatEye
                 if (_loadedStaticIconSizes.Contains(slotSize))
                     return;
 
+                if (Directory.Exists(_config.PathConfig.StaticIcons))
+                    LoadStaticCorrelationData();
                 Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
                 try
                 {
@@ -185,7 +187,8 @@ namespace RatEye
                                 var useCache = _config.ProcessingConfig.UseCache;
                                 var sourceFile = new FileInfo(iconPath);
                                 var cacheIdentity =
-                                    $"{iconKey}|{sourceFile.Length}|{sourceFile.LastWriteTimeUtc.Ticks}";
+                                    $"{iconKey}|{sourceFile.Length}|{sourceFile.LastWriteTimeUtc.Ticks}"
+                                    + $"|{item.GetType().FullName}|{item.BackgroundColor}";
                                 var cacheIconPath = Path.Combine(
                                     _cacheDirectory,
                                     $"{cacheIdentity.CacheKey(configHash)}.bmp"

@@ -15,6 +15,7 @@ namespace RatEye
 	{
 		private static List<string> _backlog = new();
 		private static readonly object Sync = new();
+		private static readonly object DebugFileSync = new();
 
 		internal static void LogDebug(string message, Exception e)
 		{
@@ -30,9 +31,7 @@ namespace RatEye
 		internal static void LogDebugBitmap(Bitmap bitmap, string fileName = "bitmap")
 		{
 			if (Config.LogDebug)
-			{
-				bitmap.Save(GetUniquePath(Config.Path.Debug, fileName, ".png"));
-			}
+				SaveDebugBitmap(bitmap, Config.Path.Debug, fileName);
 		}
 
 		internal static void LogDebugMat(OpenCvSharp.Mat mat, string fileName = "mat")
@@ -44,10 +43,28 @@ namespace RatEye
 			{
 				using var converted = new Mat(mat.Size(), MatType.CV_8UC1);
 				mat.ConvertTo(converted, MatType.CV_8UC1, 255);
-				converted.SaveImage(GetUniquePath(Config.Path.Debug, fileName, ".png"));
+				SaveDebugMat(converted, Config.Path.Debug, fileName);
 				return;
 			}
-			mat.SaveImage(GetUniquePath(Config.Path.Debug, fileName, ".png"));
+			SaveDebugMat(mat, Config.Path.Debug, fileName);
+		}
+
+		internal static string SaveDebugBitmap(Bitmap bitmap, string basePath, string fileName)
+		{
+			lock (DebugFileSync)
+			{
+				string path = GetUniquePath(basePath, fileName, ".png");
+				bitmap.Save(path);
+				return path;
+			}
+		}
+
+		private static void SaveDebugMat(OpenCvSharp.Mat mat, string basePath, string fileName)
+		{
+			lock (DebugFileSync)
+			{
+				mat.SaveImage(GetUniquePath(basePath, fileName, ".png"));
+			}
 		}
 
 		private static string GetUniquePath(string basePath, string fileName, string extension)

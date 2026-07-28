@@ -118,7 +118,68 @@ public class RatEyeCacheTests
 		}
 	}
 
-	private static Config CreateConfig(string iconsDirectory)
+	[Fact]
+	public void Missing_static_icon_directory_can_be_installed_without_restarting_the_manager()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-install-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		Config config = CreateConfig(iconsDirectory);
+
+		try
+		{
+			using IconManager manager = new(config, Path.Combine(root, "cache"));
+			Directory.CreateDirectory(iconsDirectory);
+			WriteIcon(Path.Combine(iconsDirectory, "one.png"));
+
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+
+			Assert.Single(manager.StaticIcons[new Vector2(1, 1)]);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
+	public void Cache_identity_includes_catalog_rendering_properties()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-cache-render-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		string cacheDirectory = Path.Combine(root, "cache");
+		Directory.CreateDirectory(iconsDirectory);
+		WriteIcon(Path.Combine(iconsDirectory, "one.png"));
+
+		Config blueConfig = CreateConfig(iconsDirectory, TaxonomyColor.Blue);
+		Config redConfig = CreateConfig(iconsDirectory, TaxonomyColor.Red);
+		try
+		{
+			using (IconManager manager = new(blueConfig, cacheDirectory))
+				manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			using (IconManager manager = new(redConfig, cacheDirectory))
+				manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+
+			Assert.Equal(2, Directory.GetFiles(cacheDirectory, "*.bmp").Length);
+		}
+		finally
+		{
+			blueConfig.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			redConfig.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	private static Config CreateConfig(
+		string iconsDirectory,
+		TaxonomyColor backgroundColor = TaxonomyColor.Default
+	)
 	{
 		Config config = new()
 		{
@@ -139,6 +200,7 @@ public class RatEyeCacheTests
 					ShortName = "One",
 					Width = 1,
 					Height = 1,
+					BackgroundColor = backgroundColor,
 				},
 			}
 		);

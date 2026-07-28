@@ -12,6 +12,8 @@ namespace RatEye.Diagnostics
 	public sealed class ScanReplayManifest
 	{
 		private List<string> _expectedItemIds = new List<string>();
+		private ScanReplayConfiguration _configuration = new ScanReplayConfiguration();
+		private ScanReplayContext _context = new ScanReplayContext();
 
 		/// <summary>
 		/// Current replay contract version.
@@ -50,12 +52,20 @@ namespace RatEye.Diagnostics
 		/// <summary>
 		/// RatEye processing settings required to replay the capture.
 		/// </summary>
-		public ScanReplayConfiguration Configuration { get; set; } = new ScanReplayConfiguration();
+		public ScanReplayConfiguration Configuration
+		{
+			get => _configuration;
+			set => _configuration = value ?? new ScanReplayConfiguration();
+		}
 
 		/// <summary>
 		/// Capture metadata supplied by the host application.
 		/// </summary>
-		public ScanReplayContext Context { get; set; } = new ScanReplayContext();
+		public ScanReplayContext Context
+		{
+			get => _context;
+			set => _context = value ?? new ScanReplayContext();
+		}
 
 		/// <summary>
 		/// Result observed by the host when it created the bundle.

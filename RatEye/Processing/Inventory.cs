@@ -109,8 +109,9 @@ namespace RatEye.Processing
 
 			var scale = _config.ProcessingConfig.Scale;
 
-			using var hStructure = new Mat(1, (int)(2 * scale), MatType.CV_8U, Scalar.All(1));
-			using var vStructure = new Mat((int)(2 * scale), 1, MatType.CV_8U, Scalar.All(1));
+			int structureSize = Math.Max(1, (int)(2 * scale));
+			using var hStructure = new Mat(1, structureSize, MatType.CV_8U, Scalar.All(1));
+			using var vStructure = new Mat(structureSize, 1, MatType.CV_8U, Scalar.All(1));
 
 			Cv2.Dilate(colorFilter, colorFilter, hStructure, null, 1);
 			Cv2.Dilate(colorFilter, colorFilter, vStructure, null, 1);
@@ -583,7 +584,7 @@ namespace RatEye.Processing
 
 			foreach (var icon in _icons)
 			{
-				if (position.X <= icon.Position.X || position.Y <= icon.Position.Y)
+				if (position.X < icon.Position.X || position.Y < icon.Position.Y)
 					continue;
 
 				var bottomRight = icon.Position + icon.Size;

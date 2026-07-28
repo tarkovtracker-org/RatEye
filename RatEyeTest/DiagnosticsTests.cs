@@ -30,7 +30,7 @@ public class DiagnosticsTests
 
 		string json = JsonConvert.SerializeObject(manifest);
 		ScanReplayManifest roundTrip = JsonConvert.DeserializeObject<ScanReplayManifest>(
-			"{\"expectedItemIds\":null}"
+			"{\"expectedItemIds\":null,\"configuration\":null,\"context\":null}"
 		);
 
 		Assert.Contains("\"schemaVersion\":", json, StringComparison.Ordinal);
@@ -39,6 +39,8 @@ public class DiagnosticsTests
 		Assert.Empty(manifest.ExpectedItemIds);
 		Assert.NotNull(roundTrip);
 		Assert.Empty(roundTrip.ExpectedItemIds);
+		Assert.NotNull(roundTrip.Configuration);
+		Assert.NotNull(roundTrip.Context);
 	}
 
 	[Fact]

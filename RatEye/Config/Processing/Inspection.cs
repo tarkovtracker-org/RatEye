@@ -1,4 +1,5 @@
 ﻿using System.Drawing;
+using System.Globalization;
 using System.IO;
 using RatEye.Properties;
 using Tesseract;
@@ -154,14 +155,14 @@ namespace RatEye
 				{
 					var components = new string[]
 					{
-						MarkerThreshold.ToString(),
-						MinItemConfidence.ToString(),
-						MarkerItemScale.ToString(),
+						MarkerThreshold.ToString(CultureInfo.InvariantCulture),
+						MinItemConfidence.ToString(CultureInfo.InvariantCulture),
+						MarkerItemScale.ToString(CultureInfo.InvariantCulture),
 						MarkerBackgroundColor.ToString(),
-						BaseTitleSearchWidth.ToString(),
-						BaseTitleSearchHeight.ToString(),
-						BaseTitleSearchRightPadding.ToString(),
-						HorizontalTitleSearchOffsetFactor.ToString(),
+						BaseTitleSearchWidth.ToString(CultureInfo.InvariantCulture),
+						BaseTitleSearchHeight.ToString(CultureInfo.InvariantCulture),
+						BaseTitleSearchRightPadding.ToString(CultureInfo.InvariantCulture),
+						HorizontalTitleSearchOffsetFactor.ToString(CultureInfo.InvariantCulture),
 						CloseButtonColorLowerBound.ToString(),
 						CloseButtonColorUpperBound.ToString(),
 					};
