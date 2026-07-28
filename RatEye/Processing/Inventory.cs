@@ -621,18 +621,24 @@ namespace RatEye.Processing
 					Logger.LogDebugMat(debugMat, "inventory/icon");
 				}
 
+				var iconPosition = new Vector2(bb.X, bb.Y);
+				var iconSize = new Vector2(bb.Width, bb.Height);
+				var existingIcon = _icons.FirstOrDefault(icon =>
+					icon.Position == iconPosition && icon.Size == iconSize
+				);
+				if (existingIcon != null)
+					return existingIcon;
+
 				using var image = _image.ToBitmap();
 				var iconImage = image.Crop(bb.X, bb.Y, bb.Width, bb.Height);
 				var icon = new Icon(
 					iconImage,
-					new(bb.X, bb.Y),
-					new(bb.Width, bb.Height),
+					iconPosition,
+					iconSize,
 					_config,
 					ownsIcon: true
 				);
-				foreach (Icon staleIcon in _icons)
-					staleIcon.Dispose();
-				_icons = new List<Icon> { icon };
+				_icons.Add(icon);
 				return icon;
 			}
 			return null;

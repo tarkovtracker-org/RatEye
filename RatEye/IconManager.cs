@@ -210,11 +210,20 @@ namespace RatEye
                                 if (!IsValidPixelSize(icon.Width) || !IsValidPixelSize(icon.Height))
                                     return;
 
+                                var size = new Vector2(PixelsToSlots(icon.Width), PixelsToSlots(icon.Height));
+                                var expectedSize = new Vector2(item.GetSlotSize());
+                                if (size != expectedSize)
+                                {
+                                    Logger.LogDebug(
+                                        $"Skipping icon whose rendered slot size {size} does not match catalog size {expectedSize}: {iconPath}"
+                                    );
+                                    return;
+                                }
+
                                 // Add the icon to the cache if caching is enabled and doesn't already contain it
                                 if (useCache && !cacheHit)
                                     SaveCacheIconAtomic(icon, cacheIconPath);
 
-                                var size = new Vector2(PixelsToSlots(icon.Width), PixelsToSlots(icon.Height));
                                 lock (loadedIcons)
                                 {
                                     if (!loadedIcons.ContainsKey(size))

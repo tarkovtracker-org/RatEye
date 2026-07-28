@@ -397,12 +397,8 @@ namespace RatEye.Processing
 			if (_detectionConfidence >= OcrVerificationThreshold)
 				return;
 
-			var langCode = ProcessingConfig.Language.ToISO3Code();
-			var trainedDataPath = System.IO.Path.Combine(
-				PathConfig.TrainedData,
-				$"{langCode}.traineddata"
-			);
-			if (!System.IO.File.Exists(trainedDataPath))
+			var tesseractLanguage = GetTesseractLanguage();
+			if (!HasRequiredTrainedData(tesseractLanguage))
 				return;
 
 			long started = ProcessingTimings.Start();
@@ -541,27 +537,19 @@ namespace RatEye.Processing
 			if (tesseractEngine != null)
 				return tesseractEngine;
 
-			// Check if trained data is present
-			var langCode = _config.ProcessingConfig.Language.ToISO3Code();
-			var traineddataPath = $"{PathConfig.TrainedData}\\{langCode}.traineddata";
-			if (!System.IO.File.Exists(traineddataPath))
+			var language = GetTesseractLanguage();
+			foreach (var languageCode in language.Split('+'))
 			{
-				var message = "Could not find traineddata at: " + traineddataPath;
-				throw new System.IO.FileNotFoundException(message, traineddataPath);
+				var trainedDataPath = System.IO.Path.Combine(
+					PathConfig.TrainedData,
+					$"{languageCode}.traineddata"
+				);
+				if (!System.IO.File.Exists(trainedDataPath))
+				{
+					var message = "Could not find traineddata at: " + trainedDataPath;
+					throw new System.IO.FileNotFoundException(message, trainedDataPath);
+				}
 			}
-
-			// Load additional language to expand the primary one
-			var addLang = _config.ProcessingConfig.Language switch
-			{
-				//Language.Chinese => "eng",
-				Language.Czech => "+eng",
-				Language.Japanese => "+eng",
-				Language.Korean => "+eng",
-				Language.Russian => "+eng",
-				_ => "",
-			};
-
-			var language = langCode + addLang;
 
 			// Create a tesseract instance
 			IconConfig.TesseractEngine = new TesseractEngine(
@@ -574,6 +562,36 @@ namespace RatEye.Processing
 			};
 
 			return IconConfig.TesseractEngine;
+		}
+
+		private string GetTesseractLanguage()
+		{
+			var langCode = ProcessingConfig.Language.ToISO3Code();
+			var addLang = _config.ProcessingConfig.Language switch
+			{
+				//Language.Chinese => "eng",
+				Language.Czech => "+eng",
+				Language.Japanese => "+eng",
+				Language.Korean => "+eng",
+				Language.Russian => "+eng",
+				_ => "",
+			};
+
+			return langCode + addLang;
+		}
+
+		private bool HasRequiredTrainedData(string language)
+		{
+			return language
+				.Split('+')
+				.All(languageCode =>
+					System.IO.File.Exists(
+						System.IO.Path.Combine(
+							PathConfig.TrainedData,
+							$"{languageCode}.traineddata"
+						)
+					)
+				);
 		}
 
 		/// <summary>

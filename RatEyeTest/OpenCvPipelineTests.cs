@@ -134,6 +134,39 @@ public class OpenCvPipelineTests
 	}
 
 	[Fact]
+	public void Highlighted_inventory_keeps_previous_located_icons_alive()
+	{
+		using Bitmap screenshot = new(460, 200);
+		using (Graphics graphics = Graphics.FromImage(screenshot))
+		{
+			graphics.Clear(System.Drawing.Color.Black);
+			using SolidBrush highlight = new(System.Drawing.Color.FromArgb(90, 90, 90));
+			graphics.FillRectangle(highlight, 60, 40, 126, 63);
+			graphics.FillRectangle(highlight, 260, 40, 126, 63);
+		}
+
+		string missingDirectory = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-missing-" + Guid.NewGuid().ToString("N")
+		);
+		Config config = CreateProcessingConfig(optimizeHighlighted: true);
+		config.PathConfig.StaticIcons = missingDirectory;
+		config.PathConfig.TrainedData = missingDirectory;
+		config.ProcessingConfig.IconConfig.UseStaticIcons = true;
+		config.ProcessingConfig.IconConfig.ScanRotatedIcons = false;
+		using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		using RatEye.Processing.Inventory inventory = engine.NewInventory(screenshot);
+
+		RatEye.Processing.Icon? first = inventory.LocateIcon(new Vector2(120, 70));
+		RatEye.Processing.Icon? second = inventory.LocateIcon(new Vector2(320, 70));
+
+		Assert.NotNull(first);
+		Assert.NotNull(second);
+		Assert.NotSame(first, second);
+		Assert.Equal(0, first.DetectionConfidence);
+	}
+
+	[Fact]
 	public void Normal_inventory_rejects_a_slot_scale_too_small_for_safe_edge_walking()
 	{
 		using Bitmap screenshot = new(32, 32);
@@ -340,6 +373,39 @@ public class OpenCvPipelineTests
 		engine.Config.IconManager.EnsureStaticIconsLoaded(new Vector2(1, 1));
 
 		Assert.Empty(engine.Config.IconManager.StaticIcons);
+	}
+
+	[Fact]
+	public void Low_confidence_icon_verification_skips_ocr_when_secondary_traineddata_is_missing()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-partial-traineddata-" + Guid.NewGuid().ToString("N")
+		);
+		Directory.CreateDirectory(root);
+		try
+		{
+			File.WriteAllText(Path.Combine(root, "rus.traineddata"), "");
+			Config config = CreateProcessingConfig(optimizeHighlighted: false);
+			config.PathConfig.StaticIcons = Path.Combine(root, "missing-icons");
+			config.PathConfig.TrainedData = root;
+			config.ProcessingConfig.Language = RatStash.Language.Russian;
+			config.ProcessingConfig.IconConfig.UseStaticIcons = true;
+			config.ProcessingConfig.IconConfig.ScanRotatedIcons = false;
+			using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+			using Bitmap source = new(64, 64);
+			using RatEye.Processing.Icon icon = engine.NewIcon(
+				source,
+				Vector2.Zero,
+				new Vector2(64, 64)
+			);
+
+			Assert.Equal(0, icon.DetectionConfidence);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
 	}
 
 	private static Config CreateProcessingConfig(bool optimizeHighlighted) =>

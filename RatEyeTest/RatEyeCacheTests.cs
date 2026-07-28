@@ -91,6 +91,33 @@ public class RatEyeCacheTests
 		}
 	}
 
+	[Fact]
+	public void Icon_with_rendered_size_that_disagrees_with_catalog_is_skipped()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-size-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		Directory.CreateDirectory(iconsDirectory);
+
+		Config config = CreateConfig(iconsDirectory);
+		try
+		{
+			WriteIcon(Path.Combine(iconsDirectory, "one.png"), width: 127, height: 64);
+
+			using IconManager manager = new(config, Path.Combine(root, "cache"));
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+
+			Assert.Empty(manager.StaticIcons);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
 	private static Config CreateConfig(string iconsDirectory)
 	{
 		Config config = new()
@@ -118,13 +145,13 @@ public class RatEyeCacheTests
 		return config;
 	}
 
-	private static void WriteIcon(string path)
+	private static void WriteIcon(string path, int width = 64, int height = 64)
 	{
-		using Bitmap bitmap = new(64, 64);
+		using Bitmap bitmap = new(width, height);
 		using (Graphics graphics = Graphics.FromImage(bitmap))
 		{
 			using Brush brush = new SolidBrush(System.Drawing.Color.White);
-			graphics.FillEllipse(brush, 16, 16, 32, 32);
+			graphics.FillEllipse(brush, width / 4, height / 4, width / 2, height / 2);
 		}
 		bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
 	}
