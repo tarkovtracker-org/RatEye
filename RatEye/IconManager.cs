@@ -20,12 +20,13 @@ namespace RatEye
         private const int MaxCacheFiles = 10_000;
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(30);
         private static readonly TimeSpan MaxTemporaryCacheFileAge = TimeSpan.FromDays(1);
-        private static readonly TimeSpan StaticIconSourceFallbackPollInterval =
+        private static readonly TimeSpan DefaultStaticIconSourceFallbackPollInterval =
             TimeSpan.FromSeconds(30);
 
         private readonly Config _config;
         private readonly string _cacheDirectory;
         private readonly Func<string, FileSystemWatcher> _staticIconSourceWatcherFactory;
+        private readonly TimeSpan _staticIconSourceFallbackPollInterval;
 
         /// <summary>
         /// Static icons are those which are rendered ahead of time.
@@ -83,7 +84,8 @@ namespace RatEye
         internal IconManager(
             Config config,
             string cacheDirectory,
-            Func<string, FileSystemWatcher> staticIconSourceWatcherFactory = null
+            Func<string, FileSystemWatcher> staticIconSourceWatcherFactory = null,
+            TimeSpan? staticIconSourceFallbackPollInterval = null
         )
         {
             _config = config;
@@ -91,6 +93,9 @@ namespace RatEye
             _staticIconSourceWatcherFactory =
                 staticIconSourceWatcherFactory
                 ?? (path => new FileSystemWatcher(path, "*.png"));
+            _staticIconSourceFallbackPollInterval =
+                staticIconSourceFallbackPollInterval
+                ?? DefaultStaticIconSourceFallbackPollInterval;
             NormalizedItems = _config
                 .RatStashDB.GetItems()
                 .Select(item => (item, (item.Name ?? "").CyrillicToLatin().ToLowerInvariant()))
@@ -137,10 +142,7 @@ namespace RatEye
                     bool refreshIconSources =
                         _staticIconSourceHashes.Count == 0
                         || sourceGeneration != _committedStaticIconSourceGeneration
-                        || (
-                            !watcherAvailable
-                            && DateTime.UtcNow >= _nextStaticIconSourceFallbackPollUtc
-                        );
+                        || DateTime.UtcNow >= _nextStaticIconSourceFallbackPollUtc;
                     string directoryFingerprint = _staticIconDirectoryFingerprint;
                     Dictionary<string, string> sourceHashes = _staticIconSourceHashes;
                     try
@@ -322,7 +324,7 @@ namespace RatEye
                     _staticIconSourceWatcher = null;
                     _staticIconSourceWatcherUnavailable = true;
                     _nextStaticIconSourceWatcherRetryUtc = DateTime.UtcNow.Add(
-                        StaticIconSourceFallbackPollInterval
+                        _staticIconSourceFallbackPollInterval
                     );
                     watcher?.Dispose();
                     Logger.LogDebug(
@@ -372,7 +374,7 @@ namespace RatEye
             _nextStaticIconSourceFallbackPollUtc =
                 watcherAvailable
                     ? DateTime.MaxValue
-                    : DateTime.UtcNow.Add(StaticIconSourceFallbackPollInterval);
+                    : DateTime.UtcNow.Add(_staticIconSourceFallbackPollInterval);
         }
 
         private static bool IsRecoverableStaticIconWatcherException(Exception exception) =>

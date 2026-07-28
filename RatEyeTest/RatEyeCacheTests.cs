@@ -230,6 +230,51 @@ public class RatEyeCacheTests
 	}
 
 	[Fact]
+	public void Static_icon_fallback_reconciles_changes_when_watcher_recovers()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-watcher-recovery-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		string iconPath = Path.Combine(iconsDirectory, "one.png");
+		Directory.CreateDirectory(iconsDirectory);
+		WriteIcon(iconPath);
+		Config config = CreateConfig(iconsDirectory);
+		int watcherAttempts = 0;
+
+		try
+		{
+			using IconManager manager = new(
+				config,
+				Path.Combine(root, "cache"),
+				path =>
+				{
+					watcherAttempts++;
+					if (watcherAttempts <= 2)
+						throw new IOException("FileSystemWatcher is temporarily unavailable.");
+					return new FileSystemWatcher(path, "*.png");
+				},
+				TimeSpan.Zero
+			);
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Mat original = manager.StaticIcons[new Vector2(1, 1)].Values.Single();
+
+			WriteIcon(iconPath, color: System.Drawing.Color.Red);
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Mat replacement = manager.StaticIcons[new Vector2(1, 1)].Values.Single();
+
+			Assert.NotSame(original, replacement);
+			Assert.Equal(3, watcherAttempts);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
 	public void Cache_identity_includes_catalog_rendering_properties()
 	{
 		string root = Path.Combine(
