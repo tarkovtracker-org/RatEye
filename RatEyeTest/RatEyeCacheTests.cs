@@ -2,6 +2,8 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using OpenCvSharp;
 using RatEye;
 using RatStash;
@@ -249,6 +251,102 @@ public class RatEyeCacheTests
 			File.Delete(iconPath);
 			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
 			Assert.Empty(manager.StaticIcons);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
+	public async Task Static_icon_refresh_keeps_previous_templates_available_until_replacements_are_ready()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-atomic-refresh-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		Directory.CreateDirectory(iconsDirectory);
+
+		const int iconCount = 64;
+		RatStash.Item[] items = Enumerable
+			.Range(0, iconCount)
+			.Select(index => new RatStash.Item
+			{
+				Id = $"item-{index}",
+				Name = $"Item {index}",
+				ShortName = $"Item {index}",
+				Width = 1,
+				Height = 1,
+			})
+			.ToArray();
+		foreach (RatStash.Item item in items)
+			WriteIcon(Path.Combine(iconsDirectory, item.Id + ".png"));
+
+		Config config = CreateConfig(iconsDirectory);
+		config.RatStashDB = Database.FromItems(items);
+		try
+		{
+			using IconManager manager = new(config, Path.Combine(root, "cache"));
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Assert.Equal(
+				iconCount,
+				manager.StaticIcons[new Vector2(1, 1)].Count
+			);
+
+			DateTime refreshedTimestamp = DateTime.UtcNow.AddSeconds(2);
+			foreach (RatStash.Item item in items)
+			{
+				string iconPath = Path.Combine(iconsDirectory, item.Id + ".png");
+				WriteIcon(iconPath, color: System.Drawing.Color.Red);
+				File.SetLastWriteTimeUtc(iconPath, refreshedTimestamp);
+			}
+
+			using ManualResetEventSlim observerStarted = new();
+			using CancellationTokenSource stopObserver = new();
+			int observedEmptyTemplates = 0;
+			Task observer = Task.Factory.StartNew(
+				() =>
+				{
+					observerStarted.Set();
+					while (!stopObserver.IsCancellationRequested)
+					{
+						manager.StaticIconsLock.EnterReadLock();
+						try
+						{
+							if (manager.StaticIcons.Count == 0)
+								Interlocked.Exchange(ref observedEmptyTemplates, 1);
+						}
+						finally
+						{
+							manager.StaticIconsLock.ExitReadLock();
+						}
+
+						Thread.Yield();
+					}
+				},
+				CancellationToken.None,
+				TaskCreationOptions.LongRunning,
+				TaskScheduler.Default
+			);
+			observerStarted.Wait();
+
+			try
+			{
+				manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			}
+			finally
+			{
+				stopObserver.Cancel();
+				await observer;
+			}
+
+			Assert.Equal(0, observedEmptyTemplates);
+			Assert.Equal(
+				iconCount,
+				manager.StaticIcons[new Vector2(1, 1)].Count
+			);
 		}
 		finally
 		{

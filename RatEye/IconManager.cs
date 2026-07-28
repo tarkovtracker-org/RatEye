@@ -106,28 +106,27 @@ namespace RatEye
             lock (_staticIconLoadLock)
             {
                 Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
+                bool replaceExistingIcons;
+                string directoryFingerprint;
                 try
                 {
-                    string directoryFingerprint = GetStaticIconDirectoryFingerprint(
+                    directoryFingerprint = GetStaticIconDirectoryFingerprint(
                         _config.PathConfig.StaticIcons
                     );
-                    if (
-                        !string.Equals(
-                            _staticIconDirectoryFingerprint,
-                            directoryFingerprint,
-                            StringComparison.Ordinal
-                        )
-                    )
-                    {
-                        ClearStaticIcons();
-                        _loadedStaticIconSizes.Clear();
-                        _staticIconDirectoryFingerprint = directoryFingerprint;
-                    }
-                    if (_loadedStaticIconSizes.Contains(slotSize))
+                    replaceExistingIcons = !string.Equals(
+                        _staticIconDirectoryFingerprint,
+                        directoryFingerprint,
+                        StringComparison.Ordinal
+                    );
+                    if (!replaceExistingIcons && _loadedStaticIconSizes.Contains(slotSize))
                         return;
 
                     LoadStaticCorrelationData();
-                    newIcons = LoadNewIcons(_config.PathConfig.StaticIcons, slotSize);
+                    newIcons = LoadNewIcons(
+                        _config.PathConfig.StaticIcons,
+                        slotSize,
+                        skipExistingIcons: !replaceExistingIcons
+                    );
                 }
                 catch (Exception e) when (IsRecoverableFileSystemException(e))
                 {
@@ -142,12 +141,25 @@ namespace RatEye
                 StaticIconsLock.EnterWriteLock();
                 try
                 {
-                    foreach (var icons in newIcons)
+                    if (replaceExistingIcons)
                     {
-                        if (!StaticIcons.ContainsKey(icons.Key))
-                            StaticIcons.Add(icons.Key, new Dictionary<string, Mat>());
-                        foreach (var icon in icons.Value)
-                            StaticIcons[icons.Key].Add(icon.Key, icon.Value);
+                        Dictionary<Vector2, Dictionary<string, Mat>> replacedIcons = StaticIcons;
+                        StaticIcons = newIcons;
+                        _loadedStaticIconSizes.Clear();
+                        _staticIconDirectoryFingerprint = directoryFingerprint;
+
+                        foreach (Mat icon in replacedIcons.Values.SelectMany(group => group.Values))
+                            icon.Dispose();
+                    }
+                    else
+                    {
+                        foreach (var icons in newIcons)
+                        {
+                            if (!StaticIcons.ContainsKey(icons.Key))
+                                StaticIcons.Add(icons.Key, new Dictionary<string, Mat>());
+                            foreach (var icon in icons.Value)
+                                StaticIcons[icons.Key].Add(icon.Key, icon.Value);
+                        }
                     }
 
                     _loadedStaticIconSizes.Add(slotSize);
@@ -181,7 +193,8 @@ namespace RatEye
 
         private Dictionary<Vector2, Dictionary<string, Mat>> LoadNewIcons(
             string folderPath,
-            Vector2 slotSizeFilter = null
+            Vector2 slotSizeFilter = null,
+            bool skipExistingIcons = true
         )
         {
             if (!Directory.Exists(folderPath))
@@ -215,8 +228,11 @@ namespace RatEye
                                 if (slotSizeFilter != null && new Vector2(item.GetSlotSize()) != slotSizeFilter)
                                     return;
 
-                                // Skip existing icons
-                                if (StaticIcons.Any(x => x.Value.ContainsKey(iconKey)))
+                                // Skip existing icons unless a changed source set is being rebuilt.
+                                if (
+                                    skipExistingIcons
+                                    && StaticIcons.Any(x => x.Value.ContainsKey(iconKey))
+                                )
                                     return;
 
                                 var useCache = _config.ProcessingConfig.UseCache;
