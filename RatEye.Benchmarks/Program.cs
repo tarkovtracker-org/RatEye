@@ -11,7 +11,7 @@ try
 }
 catch (Exception exception)
 {
-	return Fail(exception.Message);
+	return Fail(exception.ToString());
 }
 
 static int RunBenchmark(string[] arguments)

@@ -538,12 +538,8 @@ namespace RatEye.Processing
 				return tesseractEngine;
 
 			var language = GetTesseractLanguage();
-			foreach (var languageCode in language.Split('+'))
+			foreach (string trainedDataPath in GetRequiredTrainedDataPaths(language))
 			{
-				var trainedDataPath = System.IO.Path.Combine(
-					PathConfig.TrainedData,
-					$"{languageCode}.traineddata"
-				);
 				if (!System.IO.File.Exists(trainedDataPath))
 				{
 					var message = "Could not find traineddata at: " + trainedDataPath;
@@ -582,17 +578,18 @@ namespace RatEye.Processing
 
 		private bool HasRequiredTrainedData(string language)
 		{
-			return language
+			return GetRequiredTrainedDataPaths(language).All(System.IO.File.Exists);
+		}
+
+		private IEnumerable<string> GetRequiredTrainedDataPaths(string language) =>
+			language
 				.Split('+')
-				.All(languageCode =>
-					System.IO.File.Exists(
-						System.IO.Path.Combine(
-							PathConfig.TrainedData,
-							$"{languageCode}.traineddata"
-						)
+				.Select(languageCode =>
+					System.IO.Path.Combine(
+						PathConfig.TrainedData,
+						$"{languageCode}.traineddata"
 					)
 				);
-		}
 
 		/// <summary>
 		/// Releases bitmap resources owned by this icon result.

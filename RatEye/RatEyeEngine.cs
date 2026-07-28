@@ -1,4 +1,6 @@
 ﻿using System.Drawing;
+using System;
+using System.Collections.Generic;
 using RatEye.Processing;
 using Inventory = RatEye.Processing.Inventory;
 
@@ -7,6 +9,12 @@ namespace RatEye
 	/// <summary>
 	/// Core class which allows creating new processing objects
 	/// </summary>
+	/// <remarks>
+	/// The engine owns processing resources stored on its <see cref="Config"/>.
+	/// Do not share that config with another engine, use returned processing
+	/// objects after disposal, or call <see cref="Dispose"/> concurrently with
+	/// processing.
+	/// </remarks>
 	public class RatEyeEngine : System.IDisposable
 	{
 		private readonly object _lifecycleSync = new object();
@@ -98,6 +106,11 @@ namespace RatEye
 		/// <summary>
 		/// Releases processing resources owned by this engine instance.
 		/// </summary>
+		/// <remarks>
+		/// Disposal mutates the caller-supplied <see cref="Config"/> by releasing
+		/// its icon manager, Tesseract engines, and inspection marker. Complete
+		/// all work on returned processing objects before disposing the engine.
+		/// </remarks>
 		public void Dispose()
 		{
 			lock (_lifecycleSync)
@@ -106,20 +119,78 @@ namespace RatEye
 					return;
 				_disposed = true;
 
-				Config.IconManager?.Dispose();
-				Config.IconManager = null;
-				lock (Config.ProcessingConfig.InspectionConfig.TesseractSync)
-				{
-					Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
-					Config.ProcessingConfig.InspectionConfig.TesseractEngine = null;
-				}
-				lock (Config.ProcessingConfig.IconConfig.TesseractSync)
-				{
-					Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();
-					Config.ProcessingConfig.IconConfig.TesseractEngine = null;
-				}
-				Config.ProcessingConfig.InspectionConfig.DisposeMarker();
-				System.GC.SuppressFinalize(this);
+				List<Exception> cleanupErrors = new List<Exception>();
+				TryCleanup(
+					() =>
+					{
+						try
+						{
+							Config.IconManager?.Dispose();
+						}
+						finally
+						{
+							Config.IconManager = null;
+						}
+					},
+					cleanupErrors
+				);
+				TryCleanup(
+					() =>
+					{
+						lock (Config.ProcessingConfig.InspectionConfig.TesseractSync)
+						{
+							try
+							{
+								Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
+							}
+							finally
+							{
+								Config.ProcessingConfig.InspectionConfig.TesseractEngine = null;
+							}
+						}
+					},
+					cleanupErrors
+				);
+				TryCleanup(
+					() =>
+					{
+						lock (Config.ProcessingConfig.IconConfig.TesseractSync)
+						{
+							try
+							{
+								Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();
+							}
+							finally
+							{
+								Config.ProcessingConfig.IconConfig.TesseractEngine = null;
+							}
+						}
+					},
+					cleanupErrors
+				);
+				TryCleanup(
+					Config.ProcessingConfig.InspectionConfig.DisposeMarker,
+					cleanupErrors
+				);
+				GC.SuppressFinalize(this);
+
+				if (cleanupErrors.Count > 0)
+					throw new AggregateException(
+						"One or more RatEye resources could not be released.",
+						cleanupErrors
+					);
+			}
+		}
+
+		private static void TryCleanup(Action cleanup, ICollection<Exception> errors)
+		{
+			try
+			{
+				cleanup();
+			}
+			catch (Exception exception)
+			{
+				errors.Add(exception);
 			}
 		}
 	}

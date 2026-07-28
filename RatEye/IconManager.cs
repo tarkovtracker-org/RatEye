@@ -72,7 +72,7 @@ namespace RatEye
             _cacheDirectory = cacheDirectory;
             NormalizedItems = _config
                 .RatStashDB.GetItems()
-                .Select(item => (item, (item.Name ?? "").CyrillicToLatin()))
+                .Select(item => (item, (item.Name ?? "").CyrillicToLatin().ToLowerInvariant()))
                 .ToList()
                 .AsReadOnly();
 
@@ -195,6 +195,18 @@ namespace RatEye
                                 );
                                 icon = useCache ? TryLoadCachedIcon(cacheIconPath) : null;
                                 var cacheHit = icon != null;
+
+                                if (cacheHit && !HasExpectedRenderedSize(icon, item))
+                                {
+                                    icon.Dispose();
+                                    icon = null;
+                                    cacheHit = false;
+                                    DeleteCacheFileBestEffort(cacheIconPath);
+                                    Logger.LogDebug(
+                                        "Regenerating cached icon with unexpected rendered size: "
+                                            + cacheIconPath
+                                    );
+                                }
 
                                 if (!cacheHit)
                                 {
@@ -722,6 +734,15 @@ namespace RatEye
         private bool IsValidPixelSize(int pixels)
         {
             return Math.Abs(1 - pixels % _config.ProcessingConfig.BaseSlotSize) < 0.01f;
+        }
+
+        private bool HasExpectedRenderedSize(Mat icon, Item item)
+        {
+            if (!IsValidPixelSize(icon.Width) || !IsValidPixelSize(icon.Height))
+                return false;
+
+            return new Vector2(PixelsToSlots(icon.Width), PixelsToSlots(icon.Height))
+                == new Vector2(item.GetSlotSize());
         }
 
         public void Dispose()

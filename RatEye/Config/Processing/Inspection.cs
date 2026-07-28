@@ -15,29 +15,10 @@ namespace RatEye
 			/// </summary>
 			public class Inspection
 			{
-				private Bitmap _marker;
-
 				/// <summary>
 				/// Marker bitmap to identify regions of interest. This should be a cropped image of the magnifier icon.
-				/// The embedded default is loaded on first access.
 				/// </summary>
-				public Bitmap Marker
-				{
-					get
-					{
-						lock (MarkerSync)
-						{
-							return _marker ??= LoadMarker();
-						}
-					}
-					set
-					{
-						lock (MarkerSync)
-						{
-							_marker = value;
-						}
-					}
-				}
+				public Bitmap Marker = LoadMarker();
 				internal readonly object MarkerSync = new();
 
 				/// <summary>
@@ -128,7 +109,7 @@ namespace RatEye
 					{
 						lock (MarkerSync)
 						{
-							return _marker != null;
+							return Marker != null;
 						}
 					}
 				}
@@ -137,8 +118,8 @@ namespace RatEye
 				{
 					lock (MarkerSync)
 					{
-						_marker ??= LoadMarker();
-						return new Bitmap(_marker);
+						Marker ??= LoadMarker();
+						return new Bitmap(Marker);
 					}
 				}
 
@@ -146,8 +127,8 @@ namespace RatEye
 				{
 					lock (MarkerSync)
 					{
-						_marker?.Dispose();
-						_marker = null;
+						Marker?.Dispose();
+						Marker = null;
 					}
 				}
 

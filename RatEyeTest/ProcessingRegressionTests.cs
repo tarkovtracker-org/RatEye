@@ -301,7 +301,7 @@ public class ProcessingRegressionTests
 	}
 
 	[Fact]
-	public void Marker_peak_extraction_terminates_for_threshold_at_response_floor()
+	public void Marker_peak_extraction_collapses_flat_low_threshold_responses()
 	{
 		using Mat response = new(2, 2, MatType.CV_32FC1, Scalar.All(0.5));
 
@@ -311,25 +311,26 @@ public class ProcessingRegressionTests
 			-1f
 		);
 
-		Assert.Equal(4, matches.Count);
+		Assert.Single(matches);
+		Assert.Equal(Vector2.Zero, matches[0].position);
 	}
 
 	[Fact]
-	public void Inspection_marker_is_loaded_only_when_processing_needs_it()
+	public void Inspection_marker_preserves_the_public_field_abi()
 	{
 		Config config = new();
-		Assert.False(config.ProcessingConfig.InspectionConfig.IsMarkerLoaded);
+		Assert.NotNull(typeof(Config.Processing.Inspection).GetField("Marker"));
+		Assert.Null(typeof(Config.Processing.Inspection).GetProperty("Marker"));
+		Assert.True(config.ProcessingConfig.InspectionConfig.IsMarkerLoaded);
 
 		using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
-		Assert.False(config.ProcessingConfig.InspectionConfig.IsMarkerLoaded);
 
 		using Bitmap scaledMarker = RatEye.Processing.Inspection.GetScaledMarker(config);
-		Assert.True(config.ProcessingConfig.InspectionConfig.IsMarkerLoaded);
 		Assert.NotSame(config.ProcessingConfig.InspectionConfig.Marker, scaledMarker);
 	}
 
 	[Fact]
-	public void Public_inspection_marker_getter_preserves_the_non_null_default()
+	public void Public_inspection_marker_field_preserves_the_non_null_default()
 	{
 		Config.Processing.Inspection inspection = new();
 

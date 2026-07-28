@@ -55,6 +55,46 @@ public class RatEyeCacheTests
 	}
 
 	[Fact]
+	public void Wrong_sized_cached_icon_is_regenerated_from_source()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-cache-size-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		string cacheDirectory = Path.Combine(root, "cache");
+		Directory.CreateDirectory(iconsDirectory);
+		Directory.CreateDirectory(cacheDirectory);
+
+		Config config = CreateConfig(iconsDirectory);
+		try
+		{
+			WriteIcon(Path.Combine(iconsDirectory, "one.png"));
+			using (IconManager manager = new(config, cacheDirectory))
+				manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+
+			string cachePath = Assert.Single(Directory.GetFiles(cacheDirectory, "*.bmp"));
+			using (Bitmap wrongSize = new(127, 64))
+				wrongSize.Save(cachePath, System.Drawing.Imaging.ImageFormat.Bmp);
+
+			using (IconManager manager = new(config, cacheDirectory))
+			{
+				manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+				Assert.Single(manager.StaticIcons[new Vector2(1, 1)]);
+			}
+
+			using Mat cachedIcon = Cv2.ImRead(cachePath, ImreadModes.Unchanged);
+			Assert.Equal(64, cachedIcon.Width);
+			Assert.Equal(64, cachedIcon.Height);
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
 	public void Cache_pruning_removes_stale_and_oldest_oversize_entries()
 	{
 		string root = Path.Combine(

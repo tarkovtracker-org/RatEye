@@ -148,7 +148,18 @@ namespace RatEye.Processing
 				for (int column = 0; column < columns; column++)
 				{
 					float confidence = responseIndexer[row, column];
-					if (!float.IsNaN(confidence) && confidence >= effectiveThreshold)
+					if (
+						!float.IsNaN(confidence)
+						&& confidence >= effectiveThreshold
+						&& IsLocalMaximum(
+							responseIndexer,
+							rows,
+							columns,
+							row,
+							column,
+							confidence
+						)
+					)
 						candidates.Add((new Point(column, row), confidence));
 				}
 			}
@@ -190,6 +201,44 @@ namespace RatEye.Processing
 			}
 
 			return matches;
+		}
+
+		private static bool IsLocalMaximum(
+			Mat.UnsafeIndexer<float> response,
+			int rows,
+			int columns,
+			int row,
+			int column,
+			float confidence
+		)
+		{
+			for (int neighborRow = Math.Max(0, row - 1); neighborRow <= Math.Min(rows - 1, row + 1); neighborRow++)
+			{
+				for (
+					int neighborColumn = Math.Max(0, column - 1);
+					neighborColumn <= Math.Min(columns - 1, column + 1);
+					neighborColumn++
+				)
+				{
+					if (neighborRow == row && neighborColumn == column)
+						continue;
+
+					float neighborConfidence = response[neighborRow, neighborColumn];
+					if (
+						neighborConfidence > confidence
+						|| (
+							neighborConfidence == confidence
+							&& (
+								neighborRow < row
+								|| (neighborRow == row && neighborColumn < column)
+							)
+						)
+					)
+						return false;
+				}
+			}
+
+			return true;
 		}
 	}
 }

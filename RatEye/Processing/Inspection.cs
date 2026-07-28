@@ -410,18 +410,23 @@ namespace RatEye.Processing
 			var processingConfig = config.ProcessingConfig;
 			var inspectionConfig = processingConfig.InspectionConfig;
 			Bitmap marker = inspectionConfig.CloneMarker();
-			Bitmap output = marker.Rescale(
-				inspectionConfig.MarkerItemScale * processingConfig.Scale
-			);
+			Bitmap output = null;
 			Bitmap result = null;
 			try
 			{
+				output = marker.Rescale(
+					inspectionConfig.MarkerItemScale * processingConfig.Scale
+				);
 				result = output.TransparentToColor(inspectionConfig.MarkerBackgroundColor);
 				return result;
 			}
 			finally
 			{
-				if (!ReferenceEquals(output, marker) && !ReferenceEquals(output, result))
+				if (
+					output != null
+					&& !ReferenceEquals(output, marker)
+					&& !ReferenceEquals(output, result)
+				)
 					output.Dispose();
 				if (!ReferenceEquals(marker, result))
 					marker.Dispose();
@@ -459,20 +464,21 @@ namespace RatEye.Processing
 
 			Item best = null;
 			float bestConfidence = 0;
+			string normalizedTitle = _title.ToLowerInvariant();
 			foreach (var candidate in _config.IconManager.NormalizedItems)
 			{
-				int maxLength = Math.Max(candidate.NormalizedName.Length, _title.Length);
+				int maxLength = Math.Max(candidate.NormalizedName.Length, normalizedTitle.Length);
 				if (
 					maxLength > 0
 					&& 1f
-						- Math.Abs(candidate.NormalizedName.Length - _title.Length)
+						- Math.Abs(candidate.NormalizedName.Length - normalizedTitle.Length)
 							/ (float)maxLength
 						<= bestConfidence
 				)
 					continue;
 
 				float confidence = candidate
-					.NormalizedName.NormedLevenshteinDistance(_title);
+					.NormalizedName.NormedLevenshteinDistance(normalizedTitle);
 				if (confidence <= bestConfidence)
 					continue;
 

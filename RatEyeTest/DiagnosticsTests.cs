@@ -29,7 +29,8 @@ public class DiagnosticsTests
 		manifest.ExpectedItemIds = null;
 
 		string json = JsonConvert.SerializeObject(manifest);
-		ScanReplayManifest roundTrip = JsonConvert.DeserializeObject<ScanReplayManifest>(
+		ScanReplayManifest roundTrip = JsonConvert.DeserializeObject<ScanReplayManifest>(json);
+		ScanReplayManifest nullPayload = JsonConvert.DeserializeObject<ScanReplayManifest>(
 			"{\"expectedItemIds\":null,\"configuration\":null,\"context\":null}"
 		);
 
@@ -39,8 +40,10 @@ public class DiagnosticsTests
 		Assert.Empty(manifest.ExpectedItemIds);
 		Assert.NotNull(roundTrip);
 		Assert.Empty(roundTrip.ExpectedItemIds);
-		Assert.NotNull(roundTrip.Configuration);
-		Assert.NotNull(roundTrip.Context);
+		Assert.NotNull(nullPayload);
+		Assert.Empty(nullPayload.ExpectedItemIds);
+		Assert.NotNull(nullPayload.Configuration);
+		Assert.NotNull(nullPayload.Context);
 	}
 
 	[Fact]
