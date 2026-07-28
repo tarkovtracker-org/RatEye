@@ -49,7 +49,7 @@ public class RatEyeCacheTests
 		}
 		finally
 		{
-			config.ProcessingConfig.InspectionConfig.Marker.Dispose();
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
 			Directory.Delete(root, recursive: true);
 		}
 	}

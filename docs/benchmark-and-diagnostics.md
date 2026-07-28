@@ -29,7 +29,9 @@ The manifest uses schema version 1:
     "language": "English",
     "optimizeHighlighted": false,
     "useStaticIcons": true,
-    "scanRotatedIcons": true
+    "scanRotatedIcons": true,
+    "markerThreshold": 0.82,
+    "minItemConfidence": 0.55
   },
   "context": {
     "capturedAtUtc": "2026-07-27T12:00:00Z",

@@ -1,6 +1,6 @@
-<img src="media/RatLogo.png" height="100" align="right" alt="RatEye logo">
-
 # RatEye
+
+<img src="media/RatLogo.png" height="100" align="right" alt="RatEye logo">
 
 RatEye is the standalone image-processing library used by
 [RatScanner](https://github.com/RatScanner/RatScanner) to recognize Escape from

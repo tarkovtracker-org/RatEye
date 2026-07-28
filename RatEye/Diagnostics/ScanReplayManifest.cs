@@ -64,6 +64,8 @@ namespace RatEye.Diagnostics
 		public bool OptimizeHighlighted { get; set; }
 		public bool UseStaticIcons { get; set; } = true;
 		public bool ScanRotatedIcons { get; set; } = true;
+		public float MarkerThreshold { get; set; } = 0.82f;
+		public float MinItemConfidence { get; set; } = 0.55f;
 	}
 
 	/// <summary>

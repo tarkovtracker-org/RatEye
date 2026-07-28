@@ -20,12 +20,6 @@ namespace RatEye
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(30);
         private static readonly TimeSpan MaxTemporaryCacheFileAge = TimeSpan.FromDays(1);
 
-        private enum IconType
-        {
-            Static,
-            Dynamic,
-        }
-
         private readonly Config _config;
         private readonly string _cacheDirectory;
 
@@ -43,34 +37,9 @@ namespace RatEye
         internal Dictionary<Vector2, Dictionary<string, Mat>> StaticIcons = new();
 
         /// <summary>
-        /// Dynamic icons are those which need to be rendered at runtime
-        /// due to the items appearance being altered by attached items.
-        /// For example weapons are considered dynamic items since their
-        /// icon changes when you add rails, magazines, scopes and so on.
-        /// <para/>
-        /// <c>ConcurrentDictionary&lt;slotSize, Dictionary&lt;iconKey, icon&gt;&gt;</c>
-        /// </summary>
-        /// <remarks>
-        /// Use the <see cref="DynamicIconsLock"/> when accessing this collection.
-        /// Icon is of type 8UC3.
-        /// </remarks>
-        internal Dictionary<Vector2, Dictionary<string, Mat>> DynamicIcons = new();
-
-        /// <summary>
         /// Reader / Writer lock of <see cref="StaticIcons"/>
         /// </summary>
         internal readonly ReaderWriterLockSlim StaticIconsLock = new();
-
-        /// <summary>
-        /// Reader / Writer lock of <see cref="DynamicIcons"/>
-        /// </summary>
-        internal readonly ReaderWriterLockSlim DynamicIconsLock = new();
-
-        /// <summary>
-        /// The icon paths connected to each icon key
-        /// <para/> ConcurrentDictionary&lt;iconKey, iconPath&gt;
-        /// </summary>
-        private readonly Dictionary<string, string> _iconPaths = new();
 
         /// <summary>
         /// The data used to match icon keys of static icons to their item
@@ -80,23 +49,13 @@ namespace RatEye
         private Dictionary<string, Item> _staticCorrelationData = new();
 
         /// <summary>
-        /// The data used to match icon keys of dynamic icons to their item
-        /// <para/>
-        /// <c>Dictionary&lt;iconKey, item&gt;</c>
-        /// </summary>
-        private readonly Dictionary<string, (Item, ItemExtraInfo)> _dynamicCorrelationData = new();
-
-        /// <summary>
         /// Reader / Writer lock of <see cref="_staticCorrelationDataLock"/>
         /// </summary>
         private readonly ReaderWriterLockSlim _staticCorrelationDataLock = new();
 
-        /// <summary>
-        /// Reader / Writer lock of <see cref="_dynamicCorrelationDataLock"/>
-        /// </summary>
-        private readonly ReaderWriterLockSlim _dynamicCorrelationDataLock = new();
         private readonly object _staticIconLoadLock = new();
         private readonly HashSet<Vector2> _loadedStaticIconSizes = new();
+        internal IReadOnlyList<(Item Item, string NormalizedName)> NormalizedItems { get; }
         private bool _disposed;
 
         /// <summary>
@@ -111,6 +70,11 @@ namespace RatEye
         {
             _config = config;
             _cacheDirectory = cacheDirectory;
+            NormalizedItems = _config
+                .RatStashDB.GetItems()
+                .Select(item => (item, (item.Name ?? "").CyrillicToLatin()))
+                .ToList()
+                .AsReadOnly();
 
             if (_config.ProcessingConfig.UseCache)
             {
@@ -146,7 +110,7 @@ namespace RatEye
                 Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
                 try
                 {
-                    newIcons = LoadNewIcons(_config.PathConfig.StaticIcons, IconType.Static, slotSize);
+                    newIcons = LoadNewIcons(_config.PathConfig.StaticIcons, slotSize);
                 }
                 catch (Exception e) when (e is DirectoryNotFoundException or FileNotFoundException)
                 {
@@ -180,7 +144,6 @@ namespace RatEye
 
         private Dictionary<Vector2, Dictionary<string, Mat>> LoadNewIcons(
             string folderPath,
-            IconType iconType,
             Vector2 slotSizeFilter = null
         )
         {
@@ -194,16 +157,8 @@ namespace RatEye
             try
             {
                 var iconPathArray = Directory.GetFiles(folderPath, "*.png");
-                if (iconType == IconType.Static)
-                {
-                    _staticCorrelationDataLock.EnterReadLock();
-                    StaticIconsLock.EnterReadLock();
-                }
-                else if (iconType == IconType.Dynamic)
-                {
-                    _dynamicCorrelationDataLock.EnterReadLock();
-                    DynamicIconsLock.EnterReadLock();
-                }
+                _staticCorrelationDataLock.EnterReadLock();
+                StaticIconsLock.EnterReadLock();
                 try
                 {
                     var configHash = GetConfigHash();
@@ -215,7 +170,7 @@ namespace RatEye
                             Mat icon = null;
                             try
                             {
-                                var iconKey = GetIconKey(iconPath, iconType);
+                                var iconKey = GetIconKey(iconPath);
 
                                 var item = GetItemUnsafe(iconKey);
                                 if (item == null)
@@ -224,9 +179,7 @@ namespace RatEye
                                     return;
 
                                 // Skip existing icons
-                                if (iconType == IconType.Static && StaticIcons.Any(x => x.Value.ContainsKey(iconKey)))
-                                    return;
-                                if (iconType == IconType.Dynamic && DynamicIcons.Any(x => x.Value.ContainsKey(iconKey)))
+                                if (StaticIcons.Any(x => x.Value.ContainsKey(iconKey)))
                                     return;
 
                                 var useCache = _config.ProcessingConfig.UseCache;
@@ -269,7 +222,6 @@ namespace RatEye
 
                                     // Ownership of the Mat transfers to the returned collection.
                                     loadedIcons[size][iconKey] = icon;
-                                    _iconPaths[iconKey] = cacheHit ? cacheIconPath : iconPath;
                                     icon = null;
                                 }
                             }
@@ -286,16 +238,8 @@ namespace RatEye
                 }
                 finally
                 {
-                    if (iconType == IconType.Static)
-                    {
-                        _staticCorrelationDataLock.ExitReadLock();
-                        StaticIconsLock.ExitReadLock();
-                    }
-                    else if (iconType == IconType.Dynamic)
-                    {
-                        _dynamicCorrelationDataLock.ExitReadLock();
-                        DynamicIconsLock.ExitReadLock();
-                    }
+                    _staticCorrelationDataLock.ExitReadLock();
+                    StaticIconsLock.ExitReadLock();
                 }
             }
             catch
@@ -633,7 +577,7 @@ namespace RatEye
                     continue;
 
                 // Add the item to the correlation data
-                var iconKey = GetIconKey(iconPath, IconType.Static);
+                var iconKey = GetIconKey(iconPath);
                 correlationData[iconKey] = item;
             }
 
@@ -653,22 +597,13 @@ namespace RatEye
         /// <summary>
         /// Get the unique icon key for a icon path and its type
         /// </summary>
-        /// <remarks>
-        /// Keep this method coherent with <see cref="GetItem"/> and <see cref="GetItemExtraInfo"/>
-        /// </remarks>
         /// <param name="iconPath">The path to the icon</param>
-        /// <param name="iconType">The type of the icon</param>
         /// <returns>Unique identifier of the icon</returns>
-        private string GetIconKey(string iconPath, IconType iconType)
-        {
-            var basePath = iconType switch
-            {
-                IconType.Static => _config.PathConfig.StaticIcons,
-                IconType.Dynamic => _config.PathConfig.DynamicIcons,
-                _ => throw new ArgumentOutOfRangeException(nameof(iconType), iconType, null),
-            };
-            return System.IO.Path.Combine(basePath, System.IO.Path.GetFileName(iconPath));
-        }
+        private string GetIconKey(string iconPath) =>
+            System.IO.Path.Combine(
+                _config.PathConfig.StaticIcons,
+                System.IO.Path.GetFileName(iconPath)
+            );
 
         /// <summary>
         /// Get the item, referenced by its icon key
@@ -694,27 +629,12 @@ namespace RatEye
                 }
             }
 
-            if (iconKey.StartsWith(_config.PathConfig.DynamicIcons))
-            {
-                _dynamicCorrelationDataLock.EnterReadLock();
-                try
-                {
-                    _dynamicCorrelationData.TryGetValue(iconKey, out var item);
-                    return item.Item1;
-                }
-                finally
-                {
-                    _dynamicCorrelationDataLock.ExitReadLock();
-                }
-            }
-
             return null;
         }
 
         /// <summary>
-        /// Get the item, referenced by its icon key while assuming that
-        /// <see cref="_staticCorrelationDataLock"/> or <see cref="_dynamicCorrelationDataLock"/>
-        /// got correctly acquired before.
+        /// Get the item referenced by its icon key while assuming that
+        /// <see cref="_staticCorrelationDataLock"/> is held.
         /// </summary>
         /// <param name="iconKey">The icon key</param>
         /// <returns>The matching item</returns>
@@ -726,38 +646,6 @@ namespace RatEye
                 return item;
             }
 
-            if (iconKey.StartsWith(_config.PathConfig.DynamicIcons))
-            {
-                _dynamicCorrelationData.TryGetValue(iconKey, out var item);
-                return item.Item1;
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Get the item extra info, referenced by its icon key
-        /// </summary>
-        /// <remarks>
-        /// Keep this method coherent with <see cref="GetIconKey"/>
-        /// </remarks>
-        /// <param name="iconKey">The icon key</param>
-        /// <returns>The matching item extra info</returns>
-        internal ItemExtraInfo GetItemExtraInfo(string iconKey)
-        {
-            if (iconKey.StartsWith(_config.PathConfig.DynamicIcons))
-            {
-                _dynamicCorrelationDataLock.EnterReadLock();
-                try
-                {
-                    return _dynamicCorrelationData[iconKey].Item2;
-                }
-                finally
-                {
-                    _dynamicCorrelationDataLock.ExitReadLock();
-                }
-            }
-
             return null;
         }
 
@@ -765,24 +653,9 @@ namespace RatEye
         /// Resolve the icon path for a item possible item extra info
         /// </summary>
         /// <param name="item">The item which icon path shall be resolved</param>
-        /// <param name="itemExtraInfo">The item extra info which shall be used to further distinguish icons</param>
         /// <returns>The path to the icon of the item</returns>
-        internal string GetIconPath(Item item, ItemExtraInfo itemExtraInfo)
+        internal string GetIconPath(Item item)
         {
-            _dynamicCorrelationDataLock.EnterReadLock();
-            try
-            {
-                string dynamicPath = _dynamicCorrelationData
-                    .FirstOrDefault(entry => entry.Value.Item1 == item && entry.Value.Item2 == itemExtraInfo)
-                    .Key;
-                if (dynamicPath != null)
-                    return dynamicPath;
-            }
-            finally
-            {
-                _dynamicCorrelationDataLock.ExitReadLock();
-            }
-
             _staticCorrelationDataLock.EnterReadLock();
             try
             {
@@ -839,44 +712,25 @@ namespace RatEye
             return Math.Abs(1 - pixels % _config.ProcessingConfig.BaseSlotSize) < 0.01f;
         }
 
-        /// <summary>
-        /// Reads a file with <see cref="FileShare.ReadWrite"/>
-        /// </summary>
-        /// <param name="path">The path of the file</param>
-        /// <returns>The file content as string</returns>
-        private static string ReadFileNonBlocking(string path)
-        {
-            using var fileStream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var textReader = new StreamReader(fileStream);
-            return textReader.ReadToEnd();
-        }
-
         public void Dispose()
         {
             if (_disposed)
                 return;
 
             StaticIconsLock.EnterWriteLock();
-            DynamicIconsLock.EnterWriteLock();
             try
             {
                 foreach (Mat icon in StaticIcons.Values.SelectMany(group => group.Values))
                     icon.Dispose();
-                foreach (Mat icon in DynamicIcons.Values.SelectMany(group => group.Values))
-                    icon.Dispose();
                 StaticIcons.Clear();
-                DynamicIcons.Clear();
             }
             finally
             {
-                DynamicIconsLock.ExitWriteLock();
                 StaticIconsLock.ExitWriteLock();
             }
 
             StaticIconsLock.Dispose();
-            DynamicIconsLock.Dispose();
             _staticCorrelationDataLock.Dispose();
-            _dynamicCorrelationDataLock.Dispose();
             _disposed = true;
         }
     }

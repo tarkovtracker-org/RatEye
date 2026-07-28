@@ -21,6 +21,7 @@ namespace RatEye.Processing
 
 		private readonly Config _config;
 		private readonly Bitmap _icon;
+		private readonly bool _ownsIcon;
 		private Bitmap _scaledIcon;
 		private Item _item;
 		private ItemExtraInfo _itemExtraInfo;
@@ -101,7 +102,7 @@ namespace RatEye.Processing
 		public string IconPath =>
 			Item == null
 				? null
-				: _config.IconManager.GetIconPath(Item, ItemExtraInfo ?? new ItemExtraInfo());
+				: _config.IconManager.GetIconPath(Item);
 
 		/// <summary>
 		/// Confidence with which the <see cref="Item"/> was detected/>
@@ -139,10 +140,17 @@ namespace RatEye.Processing
 			}
 		}
 
-		internal Icon(Bitmap icon, Vector2 position, Vector2 size, Config config)
+		internal Icon(
+			Bitmap icon,
+			Vector2 position,
+			Vector2 size,
+			Config config,
+			bool ownsIcon
+		)
 		{
 			_config = config;
 			_icon = icon;
+			_ownsIcon = ownsIcon;
 			Position = position;
 			Size = size;
 		}
@@ -210,9 +218,6 @@ namespace RatEye.Processing
 
 			Logger.LogDebugMat(source, "icon/source");
 
-			(string match, float confidence, Vector2 pos) staticResult = default;
-			(string match, float confidence, Vector2 pos) dynamicResult = default;
-
 			if (!IconConfig.UseStaticIcons)
 			{
 				throw new Exception(
@@ -225,27 +230,20 @@ namespace RatEye.Processing
 			var iconManager = _config.IconManager;
 			var iconSlotSize = IconSlotSize();
 			var slotSize = rotated ? new Vector2(iconSlotSize.Y, iconSlotSize.X) : iconSlotSize;
-			if (IconConfig.UseStaticIcons)
+			(string match, float confidence, Vector2 pos) result = default;
+			iconManager.EnsureStaticIconsLoaded(slotSize);
+			iconManager.StaticIconsLock.EnterReadLock();
+			try
 			{
-				iconManager.EnsureStaticIconsLoaded(slotSize);
-				if (iconManager.StaticIcons.ContainsKey(slotSize))
-				{
-					iconManager.StaticIconsLock.EnterReadLock();
-					try
-					{
-						staticResult = TemplateMatchSub(source, iconManager.StaticIcons[slotSize]);
-					}
-					finally
-					{
-						iconManager.StaticIconsLock.ExitReadLock();
-					}
-				}
+				if (iconManager.StaticIcons.TryGetValue(slotSize, out var icons))
+					result = TemplateMatchSub(source, icons);
+			}
+			finally
+			{
+				iconManager.StaticIconsLock.ExitReadLock();
 			}
 
-			var (match, confidence, pos) =
-				staticResult.confidence > dynamicResult.confidence ? staticResult : dynamicResult;
-
-			if (!(confidence > _detectionConfidence))
+			if (!(result.confidence > _detectionConfidence))
 			{
 				Timings.RecordSince(
 					rotated ? "icon.template_match_rotated" : "icon.template_match",
@@ -255,10 +253,12 @@ namespace RatEye.Processing
 			}
 
 			_rotated = rotated;
-			_itemPosition = (rotated ? new(pos.Y, pos.X) : pos) * _config.ProcessingConfig.Scale;
-			_detectionConfidence = confidence;
-			_item = _config.IconManager.GetItem(match);
-			_itemExtraInfo = _config.IconManager.GetItemExtraInfo(match);
+			_itemPosition =
+				(rotated ? new(result.pos.Y, result.pos.X) : result.pos)
+				* _config.ProcessingConfig.Scale;
+			_detectionConfidence = result.confidence;
+			_item = _config.IconManager.GetItem(result.match);
+			_itemExtraInfo = null;
 			Timings.RecordSince(
 				rotated ? "icon.template_match_rotated" : "icon.template_match",
 				started
@@ -364,19 +364,24 @@ namespace RatEye.Processing
 
 				// OCR
 				Logger.LogDebug("Applying OCR...");
-				using var result = GetTesseractEngine().Process(pix);
-				var text = result.GetText();
-
-				var r = result.GetSegmentedRegions(PageIteratorLevel.TextLine);
-				foreach (var x in r)
+				string text;
+				lock (IconConfig.TesseractSync)
 				{
-					Logger.LogDebug("TEXT: " + x);
+					using var result = GetTesseractEngineUnsafe().Process(pix);
+					text = result.GetText();
+					foreach (
+						var region in result.GetSegmentedRegions(PageIteratorLevel.TextLine)
+					)
+					{
+						Logger.LogDebug("TEXT: " + region);
+					}
 				}
 				Logger.LogDebugMat(topTextMat, "lalalla");
 
-				var rgx = new Regex("[^a-zA-Z0-9 -\\.]");
 				_itemPosition = Vector2.Zero;
-				_ocrTitle = rgx.Replace(text.CyrillicToLatin().Trim(), "").Trim();
+				_ocrTitle = OcrShortNameSanitizer
+					.Replace(text.CyrillicToLatin().Trim(), "")
+					.Trim();
 				Logger.LogDebug("Read: " + _ocrTitle);
 				SetOCRItem();
 			}
@@ -435,10 +440,10 @@ namespace RatEye.Processing
 				using var pix = PixConverter.ToPix(filteredBitmap);
 
 				string text;
-				var tesseractEngine = GetTesseractEngine();
-				lock (tesseractEngine)
+				lock (IconConfig.TesseractSync)
 				{
-					using var result = tesseractEngine.Process(pix, PageSegMode.SingleLine);
+					using var result = GetTesseractEngineUnsafe()
+						.Process(pix, PageSegMode.SingleLine);
 					text = result.GetText();
 				}
 
@@ -529,7 +534,7 @@ namespace RatEye.Processing
 		/// Creates an instance of the OCRTesseract class. Initializes Tesseract.
 		/// </summary>
 		/// <returns>Tesseract instance trained for the bender font</returns>
-		private TesseractEngine GetTesseractEngine()
+		private TesseractEngine GetTesseractEngineUnsafe()
 		{
 			// Return if tesseract instance was already created
 			var tesseractEngine = IconConfig.TesseractEngine;
@@ -581,7 +586,8 @@ namespace RatEye.Processing
 
 			if (_scaledIcon != null && !ReferenceEquals(_scaledIcon, _icon))
 				_scaledIcon.Dispose();
-			_icon.Dispose();
+			if (_ownsIcon)
+				_icon.Dispose();
 			_disposed = true;
 			GC.SuppressFinalize(this);
 		}

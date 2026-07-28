@@ -221,7 +221,7 @@ public class OpenCvPipelineTests
 		);
 		Config config = CreateProcessingConfig(optimizeHighlighted: false);
 		config.PathConfig.TrainedData = missingDirectory;
-		config.ProcessingConfig.InspectionConfig.Marker.Dispose();
+		config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
 		config.ProcessingConfig.InspectionConfig.Marker = new Bitmap(marker);
 		config.ProcessingConfig.InspectionConfig.MarkerItemScale = 1;
 		config.ProcessingConfig.InspectionConfig.MarkerThreshold = 0.8f;
@@ -302,7 +302,8 @@ public class OpenCvPipelineTests
 				exactScan,
 				Vector2.Zero,
 				new Vector2(template.Width, template.Height),
-				engine.Config
+				engine.Config,
+				ownsIcon: true
 			);
 
 			Assert.Equal(expected.Id, result.Item.Id);

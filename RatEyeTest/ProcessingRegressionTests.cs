@@ -186,7 +186,7 @@ public class ProcessingRegressionTests
 			MarkerItemScale = 1,
 			MarkerThreshold = 0.8f,
 		};
-		inspectionConfig.Marker.Dispose();
+		inspectionConfig.Marker?.Dispose();
 		inspectionConfig.Marker = new Bitmap(marker);
 		Config config = new()
 		{
@@ -226,6 +226,65 @@ public class ProcessingRegressionTests
 		Assert.Equal(0.99f, matches[0].confidence);
 		Assert.Equal(new Vector2(12, 2), matches[1].position);
 		Assert.Equal(0.97f, matches[1].confidence);
+	}
+
+	[Fact]
+	public void Marker_peak_extraction_terminates_for_threshold_at_response_floor()
+	{
+		using Mat response = new(2, 2, MatType.CV_32FC1, Scalar.All(0.5));
+
+		var matches = RatEye.Processing.MultiInspection.ExtractMarkerPeaks(
+			response,
+			new System.Drawing.Size(1, 1),
+			-1f
+		);
+
+		Assert.Equal(4, matches.Count);
+	}
+
+	[Fact]
+	public void Inspection_marker_is_loaded_only_when_processing_needs_it()
+	{
+		Config config = new();
+		Assert.Null(config.ProcessingConfig.InspectionConfig.Marker);
+
+		using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		Assert.Null(config.ProcessingConfig.InspectionConfig.Marker);
+
+		using Bitmap scaledMarker = RatEye.Processing.Inspection.GetScaledMarker(config);
+		Assert.NotNull(config.ProcessingConfig.InspectionConfig.Marker);
+		Assert.NotSame(config.ProcessingConfig.InspectionConfig.Marker, scaledMarker);
+	}
+
+	[Fact]
+	public void NewIcon_does_not_take_ownership_of_the_callers_bitmap()
+	{
+		Config config = new();
+		using RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		using Bitmap source = new(16, 16);
+
+		using (RatEye.Processing.Icon icon = engine.NewIcon(
+			source,
+			Vector2.Zero,
+			new Vector2(16, 16)
+		))
+		{
+		}
+
+		source.SetPixel(0, 0, Color.Red);
+		Assert.Equal(Color.Red.ToArgb(), source.GetPixel(0, 0).ToArgb());
+	}
+
+	[Fact]
+	public void Engine_disposal_clears_the_config_icon_manager_reference()
+	{
+		Config config = new();
+		RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		Assert.NotNull(config.IconManager);
+
+		engine.Dispose();
+
+		Assert.Null(config.IconManager);
 	}
 
 	private static Bitmap CreateMarker()

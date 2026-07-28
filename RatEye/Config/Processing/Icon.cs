@@ -46,6 +46,7 @@ namespace RatEye
                 /// Tesseract Engine instance used and set by <see cref="RatEye.Processing.Icon"/>
                 /// </summary>
                 internal TesseractEngine TesseractEngine;
+                internal readonly object TesseractSync = new();
 
                 /// <summary>
                 /// Create a new icon config instance

@@ -17,7 +17,8 @@ namespace RatEye
                 /// <summary>
                 /// Marker bitmap to identify regions of interest. This should be a cropped image of the magnifier icon
                 /// </summary>
-                public Bitmap Marker = LoadMarker();
+                public Bitmap Marker;
+                internal readonly object MarkerSync = new();
 
                 /// <summary>
                 /// Detection threshold of the marker bitmap
@@ -87,6 +88,7 @@ namespace RatEye
                 /// Tesseract Engine instance used and set by <see cref="RatEye.Processing.Inspection"/>
                 /// </summary>
                 internal TesseractEngine TesseractEngine;
+                internal readonly object TesseractSync = new();
 
                 /// <summary>
                 /// Create a new inspection config instance
@@ -102,7 +104,13 @@ namespace RatEye
 
                 internal void EnsureMarker()
                 {
-                    Marker ??= LoadMarker();
+                    if (Marker != null)
+                        return;
+
+                    lock (MarkerSync)
+                    {
+                        Marker ??= LoadMarker();
+                    }
                 }
 
                 internal string GetHash()

@@ -69,6 +69,7 @@ namespace RatEye
 
         private static void AppendToLog(string content)
         {
+            var retryBacklog = false;
             lock (Sync)
             {
                 ProcessBacklog();
@@ -83,9 +84,17 @@ namespace RatEye
                 {
                     _backlog.Add(prefix + "Could not write to log file\n" + e + "\n");
                     _backlog.Add(prefix + content + "\n");
-                    Thread.Sleep(250);
-                    ProcessBacklog();
+                    retryBacklog = true;
                 }
+            }
+
+            if (!retryBacklog)
+                return;
+
+            Thread.Sleep(250);
+            lock (Sync)
+            {
+                ProcessBacklog();
             }
         }
 

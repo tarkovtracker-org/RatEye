@@ -215,6 +215,7 @@ namespace RatEye.Processing
 		{
 			var gridIndexer = GetByteGridIndexer(_grid, nameof(_grid));
 			var vertGridIndexer = GetByteGridIndexer(_vertGrid, nameof(_vertGrid));
+			using var image = _image.ToBitmap();
 			var scaledSlotSize = (int)(_config.ProcessingConfig.ScaledSlotSize);
 			if (scaledSlotSize < 2)
 			{
@@ -241,11 +242,11 @@ namespace RatEye.Processing
 					if (vertGridIndexer[y, x] != 0xFF)
 						continue;
 
-					TryAddIcon(gridIndexer, gridRows, gridCols, x, y);
+					TryAddIcon(image, gridIndexer, gridRows, gridCols, x, y);
 				}
 			}
 
-			AddContourIconsFromNormalGrid();
+			AddContourIconsFromNormalGrid(image);
 
 			// Quarter of the normal sized slot
 			var overlapThreshold = scaledSlotSize / 2;
@@ -277,6 +278,7 @@ namespace RatEye.Processing
 						&& overlapRect.Height > overlapThreshold
 					)
 					{
+						iconA.Dispose();
 						_icons.RemoveAt(i);
 						break;
 					}
@@ -284,7 +286,7 @@ namespace RatEye.Processing
 			}
 		}
 
-		private void AddContourIconsFromNormalGrid()
+		private void AddContourIconsFromNormalGrid(System.Drawing.Bitmap image)
 		{
 			if (_normalGridMask == null || _normalGridMask.Empty())
 				return;
@@ -298,7 +300,6 @@ namespace RatEye.Processing
 			var tolerance = Math.Max(3, (int)Math.Ceiling(scaledSlotSize * 0.08));
 			var imageBounds = new Rect(0, 0, _image.Width, _image.Height);
 
-			using var image = _image.ToBitmap();
 			foreach (var contour in contours)
 			{
 				var rect = Cv2.BoundingRect(contour);
@@ -321,7 +322,7 @@ namespace RatEye.Processing
 					continue;
 
 				var iconImage = image.Crop(topLeft.X, topLeft.Y, size.X, size.Y);
-				_icons.Add(new Icon(iconImage, topLeft, size, _config));
+				_icons.Add(new Icon(iconImage, topLeft, size, _config, ownsIcon: true));
 			}
 		}
 
@@ -412,13 +413,21 @@ namespace RatEye.Processing
 		/// <summary>
 		/// If the position at the indexer is part of a rectangle, it will be added to <see cref="_icons"/>
 		/// </summary>
+		/// <param name="image">Bitmap source used to crop accepted icons</param>
 		/// <param name="indexer">Stride-aware byte indexer of the binary grid mat</param>
 		/// <param name="rows">Number of rows in the grid</param>
 		/// <param name="cols">Number of columns in the grid</param>
 		/// <param name="x">X position of the assumed icon</param>
 		/// <param name="y">Y position of the assumed icon</param>
 		/// <returns><see langword="true"/> if it is a valid icon, else <see langword="false"/></returns>
-		private bool TryAddIcon(Mat.UnsafeIndexer<byte> indexer, int rows, int cols, int x, int y)
+		private bool TryAddIcon(
+			System.Drawing.Bitmap image,
+			Mat.UnsafeIndexer<byte> indexer,
+			int rows,
+			int cols,
+			int x,
+			int y
+		)
 		{
 			/*
 			 * The idea is, that we walk along the most inner
@@ -528,9 +537,8 @@ namespace RatEye.Processing
 				topLeft -= scaledSlotSizeVec / 8;
 				size += scaledSlotSizeVec / 4;
 
-				using var image = _image.ToBitmap();
 				var icon = image.Crop(topLeft.X, topLeft.Y, size.X, size.Y);
-				_icons.Add(new Icon(icon, topLeft, size, _config));
+				_icons.Add(new Icon(icon, topLeft, size, _config, ownsIcon: true));
 				return true;
 			}
 
@@ -615,7 +623,15 @@ namespace RatEye.Processing
 
 				using var image = _image.ToBitmap();
 				var iconImage = image.Crop(bb.X, bb.Y, bb.Width, bb.Height);
-				var icon = new Icon(iconImage, new(bb.X, bb.Y), new(bb.Width, bb.Height), _config);
+				var icon = new Icon(
+					iconImage,
+					new(bb.X, bb.Y),
+					new(bb.Width, bb.Height),
+					_config,
+					ownsIcon: true
+				);
+				foreach (Icon staleIcon in _icons)
+					staleIcon.Dispose();
 				_icons = new List<Icon> { icon };
 				return icon;
 			}

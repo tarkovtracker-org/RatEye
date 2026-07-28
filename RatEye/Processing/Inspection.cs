@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -106,8 +107,7 @@ namespace RatEye.Processing
 		/// <summary>
 		/// The path to the icon of the detected item
 		/// </summary>
-		public string IconPath =>
-			Item == null ? null : _config.IconManager.GetIconPath(Item, new ItemExtraInfo());
+		public string IconPath => Item == null ? null : _config.IconManager.GetIconPath(Item);
 
 		/// <summary>
 		/// Constructor for inspection view processing object
@@ -342,8 +342,12 @@ namespace RatEye.Processing
 			// OCR
 			long recognitionStarted = ProcessingTimings.Start();
 			Logger.LogDebug("Applying OCR...");
-			using var result = GetTesseractEngine().Process(pix);
-			var text = result.GetText();
+			string text;
+			lock (InspectionConfig.TesseractSync)
+			{
+				using var result = GetTesseractEngineUnsafe().Process(pix);
+				text = result.GetText();
+			}
 			Timings.RecordSince("inspection.ocr_recognize", recognitionStarted);
 
 			Logger.LogDebug("Read: " + text);
@@ -354,7 +358,7 @@ namespace RatEye.Processing
 		/// Creates an instance of the OCRTesseract class. Initializes Tesseract.
 		/// </summary>
 		/// <returns>Tesseract instance trained for the bender font</returns>
-		private TesseractEngine GetTesseractEngine()
+		private TesseractEngine GetTesseractEngineUnsafe()
 		{
 			// Return if tesseract instance was already created
 			var tesseractEngine = InspectionConfig.TesseractEngine;
@@ -401,21 +405,29 @@ namespace RatEye.Processing
 		/// </summary>
 		/// <remarks><see cref="Config.Processing.Scale"/> is already accounted for.</remarks>
 		/// <returns>A rescaled and alpha blended version of <see cref="Config.Processing.Inspection.Marker"/></returns>
-		private Bitmap GetScaledMarker()
+		internal static Bitmap GetScaledMarker(Config config)
 		{
-			Bitmap output = InspectionConfig.Marker.Rescale(
-				InspectionConfig.MarkerItemScale * ProcessingConfig.Scale
+			var processingConfig = config.ProcessingConfig;
+			var inspectionConfig = processingConfig.InspectionConfig;
+			inspectionConfig.EnsureMarker();
+			Bitmap marker = inspectionConfig.Marker;
+			Bitmap output = marker.Rescale(
+				inspectionConfig.MarkerItemScale * processingConfig.Scale
 			);
+			Bitmap result = null;
 			try
 			{
-				return output.TransparentToColor(InspectionConfig.MarkerBackgroundColor);
+				result = output.TransparentToColor(inspectionConfig.MarkerBackgroundColor);
+				return result;
 			}
 			finally
 			{
-				if (!ReferenceEquals(output, InspectionConfig.Marker))
+				if (!ReferenceEquals(output, marker) && !ReferenceEquals(output, result))
 					output.Dispose();
 			}
 		}
+
+		private Bitmap GetScaledMarker() => GetScaledMarker(_config);
 
 		/// <summary>
 		/// Scaled horizontal offset of the inspection window title search box
@@ -446,13 +458,24 @@ namespace RatEye.Processing
 
 			Item best = null;
 			float bestConfidence = 0;
-			foreach (Item item in _config.RatStashDB.GetItems())
+			foreach (var candidate in _config.IconManager.NormalizedItems)
 			{
-				float confidence = item.Name.CyrillicToLatin().NormedLevenshteinDistance(_title);
+				int maxLength = Math.Max(candidate.NormalizedName.Length, _title.Length);
+				if (
+					maxLength > 0
+					&& 1f
+						- Math.Abs(candidate.NormalizedName.Length - _title.Length)
+							/ (float)maxLength
+						<= bestConfidence
+				)
+					continue;
+
+				float confidence = candidate
+					.NormalizedName.NormedLevenshteinDistance(_title);
 				if (confidence <= bestConfidence)
 					continue;
 
-				best = item;
+				best = candidate.Item;
 				bestConfidence = confidence;
 			}
 
@@ -479,20 +502,22 @@ namespace RatEye.Processing
 		/// </remarks>
 		// Prefer multi-word / distinctive phrases. Single short tokens (e.g. DE "Suchen")
 		// are too easy to collide with real short item names under fuzzy matching.
-		internal static readonly string[] UiChromeTitles =
-		{
-			"Subject Search",
-			// Common localizations of the inventory filter placeholder.
-			"Поиск предмета",
-			"Rechercher un objet",
-			"Buscar objeto",
-			"Procurar item",
-			"Cerca oggetto",
-			"Szukaj przedmiotu",
-			"搜索物品",
-			"아이템 검색",
-			"アイテム検索",
-		};
+		internal static readonly IReadOnlyList<string> UiChromeTitles = Array.AsReadOnly(
+			new[]
+			{
+				"Subject Search",
+				// Common localizations of the inventory filter placeholder.
+				"Поиск предмета",
+				"Rechercher un objet",
+				"Buscar objeto",
+				"Procurar item",
+				"Cerca oggetto",
+				"Szukaj przedmiotu",
+				"搜索物品",
+				"아이템 검색",
+				"アイテム検索",
+			}
+		);
 
 		private const float UiChromeTitleMatchThreshold = 0.85f;
 

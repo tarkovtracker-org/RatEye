@@ -37,7 +37,16 @@ foreach (
 		JsonConvert.DeserializeObject<ScanReplayManifest>(File.ReadAllText(manifestPath))
 		?? throw new InvalidDataException($"Unable to deserialize {manifestPath}");
 
-	cases.Add(RunCase(manifestPath, manifest, database, iconsPath, trainedDataPath));
+	cases.Add(
+		RunCase(
+			fixtureDirectory,
+			manifestPath,
+			manifest,
+			database,
+			iconsPath,
+			trainedDataPath
+		)
+	);
 }
 
 BenchmarkReport report = new()
@@ -59,6 +68,7 @@ Console.WriteLine($"Expected-result matches: {matched}/{cases.Count}");
 return matched == cases.Count ? 0 : 2;
 
 static BenchmarkCaseReport RunCase(
+	string fixtureDirectory,
 	string manifestPath,
 	ScanReplayManifest manifest,
 	Database database,
@@ -72,8 +82,21 @@ static BenchmarkCaseReport RunCase(
 				+ $"expected {ScanReplayManifest.CurrentSchemaVersion}."
 		);
 
-	string manifestDirectory = Path.GetDirectoryName(manifestPath)!;
+	if (string.IsNullOrWhiteSpace(manifest.ImageFile) || Path.IsPathRooted(manifest.ImageFile))
+		throw new InvalidDataException(
+			$"{manifestPath} must reference an image relative to its manifest."
+		);
+
+	string manifestDirectory = Path.GetFullPath(Path.GetDirectoryName(manifestPath)!);
 	string imagePath = Path.GetFullPath(Path.Combine(manifestDirectory, manifest.ImageFile));
+	string fixtureDirectoryPrefix = Path.GetFullPath(fixtureDirectory).TrimEnd(
+		Path.DirectorySeparatorChar,
+		Path.AltDirectorySeparatorChar
+	) + Path.DirectorySeparatorChar;
+	if (!imagePath.StartsWith(fixtureDirectoryPrefix, StringComparison.OrdinalIgnoreCase))
+		throw new InvalidDataException(
+			$"{manifestPath} references an image outside the fixture directory."
+		);
 	if (!File.Exists(imagePath))
 		throw new FileNotFoundException("Replay image was not found.", imagePath);
 
@@ -219,6 +242,11 @@ static Config CreateConfig(ScanReplayConfiguration replay, string iconsPath, str
 			InventoryConfig = new Config.Processing.Inventory
 			{
 				OptimizeHighlighted = replay.OptimizeHighlighted,
+			},
+			InspectionConfig = new Config.Processing.Inspection
+			{
+				MarkerThreshold = replay.MarkerThreshold,
+				MinItemConfidence = replay.MinItemConfidence,
 			},
 			IconConfig = new Config.Processing.Icon
 			{

@@ -31,7 +31,6 @@ namespace RatEye
 
 			System.IO.Directory.CreateDirectory(config.PathConfig.CacheDir);
 
-			config.ProcessingConfig.InspectionConfig.EnsureMarker();
 			Config.IconManager = new IconManager(config);
 		}
 
@@ -70,7 +69,7 @@ namespace RatEye
 		/// <param name="size">Size of the detected item region.</param>
 		public Processing.Icon NewIcon(Bitmap image, Vector2 position, Vector2 size)
 		{
-			return new Processing.Icon(image, position, size, Config);
+			return new Processing.Icon(image, position, size, Config, ownsIcon: false);
 		}
 
 		/// <summary>
@@ -82,12 +81,22 @@ namespace RatEye
 				return;
 
 			Config.IconManager?.Dispose();
-			Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
-			Config.ProcessingConfig.InspectionConfig.TesseractEngine = null;
-			Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();
-			Config.ProcessingConfig.IconConfig.TesseractEngine = null;
-			Config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
-			Config.ProcessingConfig.InspectionConfig.Marker = null;
+			Config.IconManager = null;
+			lock (Config.ProcessingConfig.InspectionConfig.TesseractSync)
+			{
+				Config.ProcessingConfig.InspectionConfig.TesseractEngine?.Dispose();
+				Config.ProcessingConfig.InspectionConfig.TesseractEngine = null;
+			}
+			lock (Config.ProcessingConfig.IconConfig.TesseractSync)
+			{
+				Config.ProcessingConfig.IconConfig.TesseractEngine?.Dispose();
+				Config.ProcessingConfig.IconConfig.TesseractEngine = null;
+			}
+			lock (Config.ProcessingConfig.InspectionConfig.MarkerSync)
+			{
+				Config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+				Config.ProcessingConfig.InspectionConfig.Marker = null;
+			}
 			_disposed = true;
 			System.GC.SuppressFinalize(this);
 		}

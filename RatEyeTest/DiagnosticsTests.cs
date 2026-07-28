@@ -16,6 +16,8 @@ public class DiagnosticsTests
 		Assert.Equal(ScanReplayManifest.CurrentSchemaVersion, manifest.SchemaVersion);
 		Assert.Equal("inspection", manifest.ScanType);
 		Assert.Equal(1, manifest.Configuration.Scale);
+		Assert.Equal(0.82f, manifest.Configuration.MarkerThreshold);
+		Assert.Equal(0.55f, manifest.Configuration.MinItemConfidence);
 		Assert.Empty(manifest.ExpectedItemIds);
 	}
 

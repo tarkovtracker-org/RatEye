@@ -92,7 +92,7 @@ namespace RatEye.Processing
 			long started = ProcessingTimings.Start();
 			SatisfyState(State.Default);
 
-			using Bitmap marker = GetScaledMarker();
+			using Bitmap marker = Inspection.GetScaledMarker(_config);
 			var markers = GetMarkerPositions(marker);
 			_inspections = markers
 				.Select(match => new Inspection(_image, _config, match.position, match.confidence))
@@ -132,10 +132,17 @@ namespace RatEye.Processing
 		)
 		{
 			var matches = new List<(Vector2 position, float confidence)>();
-			while (true)
+			if (response.Empty())
+				return matches;
+
+			float effectiveThreshold = float.IsNaN(threshold)
+				? 1f
+				: Math.Max(threshold, -0.999999f);
+			long maxPeaks = (long)response.Rows * response.Cols;
+			while (matches.Count < maxPeaks)
 			{
 				Cv2.MinMaxLoc(response, out _, out double maxValue, out _, out Point maxLocation);
-				if (maxValue < threshold)
+				if (double.IsNaN(maxValue) || maxValue < effectiveThreshold)
 					break;
 
 				matches.Add((new Vector2(maxLocation), (float)maxValue));
@@ -151,27 +158,6 @@ namespace RatEye.Processing
 			}
 
 			return matches;
-		}
-
-		/// <summary>
-		/// Generate a marker bitmap
-		/// </summary>
-		/// <remarks><see cref="Config.Processing.Scale"/> is already accounted for.</remarks>
-		/// <returns>A rescaled and alpha blended version of <see cref="Config.Processing.Inspection.Marker"/></returns>
-		private Bitmap GetScaledMarker()
-		{
-			Bitmap output = InspectionConfig.Marker.Rescale(
-				InspectionConfig.MarkerItemScale * ProcessingConfig.Scale
-			);
-			try
-			{
-				return output.TransparentToColor(InspectionConfig.MarkerBackgroundColor);
-			}
-			finally
-			{
-				if (!ReferenceEquals(output, InspectionConfig.Marker))
-					output.Dispose();
-			}
 		}
 	}
 }
