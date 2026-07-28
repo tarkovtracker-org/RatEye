@@ -20,7 +20,6 @@ namespace RatEye
         private const int MaxCacheFiles = 10_000;
         private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(30);
         private static readonly TimeSpan MaxTemporaryCacheFileAge = TimeSpan.FromDays(1);
-        private static readonly TimeSpan StaticIconSourcePollInterval = TimeSpan.FromSeconds(30);
 
         private readonly Config _config;
         private readonly string _cacheDirectory;
@@ -56,11 +55,14 @@ namespace RatEye
         private readonly ReaderWriterLockSlim _staticCorrelationDataLock = new();
 
         private readonly object _staticIconLoadLock = new();
+        private readonly object _staticIconSourceWatcherLock = new();
         private readonly HashSet<Vector2> _loadedStaticIconSizes = new();
         private string _staticIconDirectoryFingerprint;
         private Dictionary<string, string> _staticIconSourceHashes =
             new(StringComparer.OrdinalIgnoreCase);
-        private DateTime _nextStaticIconSourcePollUtc = DateTime.MinValue;
+        private FileSystemWatcher _staticIconSourceWatcher;
+        private long _staticIconSourceGeneration = 1;
+        private long _committedStaticIconSourceGeneration;
         internal IReadOnlyList<(Item Item, string NormalizedName)> NormalizedItems { get; }
         private bool _disposed;
 
@@ -93,6 +95,7 @@ namespace RatEye
             {
                 if (Directory.Exists(_config.PathConfig.StaticIcons))
                 {
+                    EnsureStaticIconSourceWatcher();
                     ReplaceStaticCorrelationData(BuildStaticCorrelationData());
                 }
                 else
@@ -110,116 +113,225 @@ namespace RatEye
         {
             lock (_staticIconLoadLock)
             {
-                Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
-                Dictionary<string, Item> newCorrelationData;
-                bool replaceExistingIcons;
-                bool pollIconSources = DateTime.UtcNow >= _nextStaticIconSourcePollUtc;
-                string directoryFingerprint = _staticIconDirectoryFingerprint;
-                Dictionary<string, string> sourceHashes = _staticIconSourceHashes;
-                try
+                const int maxSnapshotAttempts = 3;
+                for (int attempt = 0; attempt < maxSnapshotAttempts; attempt++)
                 {
-                    if (pollIconSources)
+                    Dictionary<Vector2, Dictionary<string, Mat>> newIcons;
+                    Dictionary<string, Item> newCorrelationData;
+                    bool replaceExistingIcons;
+                    EnsureStaticIconSourceWatcher();
+                    long sourceGeneration = Volatile.Read(ref _staticIconSourceGeneration);
+                    bool refreshIconSources =
+                        _staticIconSourceHashes.Count == 0
+                        || sourceGeneration != _committedStaticIconSourceGeneration;
+                    string directoryFingerprint = _staticIconDirectoryFingerprint;
+                    Dictionary<string, string> sourceHashes = _staticIconSourceHashes;
+                    try
                     {
-                        (directoryFingerprint, sourceHashes) =
-                            GetStaticIconDirectorySnapshot(_config.PathConfig.StaticIcons);
-                    }
+                        if (refreshIconSources)
+                        {
+                            (directoryFingerprint, sourceHashes) =
+                                GetStaticIconDirectorySnapshot(
+                                    _config.PathConfig.StaticIcons
+                                );
+                        }
 
-                    replaceExistingIcons = !string.Equals(
-                        _staticIconDirectoryFingerprint,
-                        directoryFingerprint,
-                        StringComparison.Ordinal
-                    );
-                    if (!replaceExistingIcons && _loadedStaticIconSizes.Contains(slotSize))
+                        replaceExistingIcons = !string.Equals(
+                            _staticIconDirectoryFingerprint,
+                            directoryFingerprint,
+                            StringComparison.Ordinal
+                        );
+                        if (
+                            !replaceExistingIcons
+                            && _loadedStaticIconSizes.Contains(slotSize)
+                        )
+                        {
+                            if (refreshIconSources)
+                            {
+                                if (
+                                    sourceGeneration
+                                    != Volatile.Read(ref _staticIconSourceGeneration)
+                                )
+                                    continue;
+
+                                CommitStaticIconSourceSnapshot(
+                                    directoryFingerprint,
+                                    sourceHashes,
+                                    sourceGeneration
+                                );
+                            }
+                            return;
+                        }
+
+                        newCorrelationData =
+                            replaceExistingIcons
+                                ? BuildStaticCorrelationData(sourceHashes.Keys)
+                                : GetStaticCorrelationDataSnapshot();
+                        newIcons = LoadNewIcons(
+                            _config.PathConfig.StaticIcons,
+                            slotSize,
+                            sourceHashes,
+                            newCorrelationData,
+                            skipExistingIcons: !replaceExistingIcons
+                        );
+                    }
+                    catch (StaticIconSnapshotChangedException)
                     {
-                        if (pollIconSources)
-                            CommitStaticIconSourceSnapshot(directoryFingerprint, sourceHashes);
+                        InvalidateStaticIconSources();
+                        continue;
+                    }
+                    catch (Exception e) when (IsRecoverableFileSystemException(e))
+                    {
+                        // Missing Data/icons is a recoverable packaging issue; keep scanning alive.
+                        Logger.LogDebug(
+                            "Static icon folder is missing; icon matching for this slot size will stay empty until data is installed.",
+                            e
+                        );
                         return;
                     }
 
-                    newCorrelationData =
-                        replaceExistingIcons
-                            ? BuildStaticCorrelationData()
-                            : GetStaticCorrelationDataSnapshot();
-                    newIcons = LoadNewIcons(
-                        _config.PathConfig.StaticIcons,
-                        slotSize,
-                        newCorrelationData,
-                        skipExistingIcons: !replaceExistingIcons
-                    );
-                }
-                catch (Exception e) when (IsRecoverableFileSystemException(e))
-                {
-                    // Missing Data/icons is a recoverable packaging issue; keep scanning alive.
-                    Logger.LogDebug(
-                        "Static icon folder is missing; icon matching for this slot size will stay empty until data is installed.",
-                        e
-                    );
-                    return;
-                }
-
-                StaticIconsLock.EnterWriteLock();
-                try
-                {
-                    if (replaceExistingIcons)
+                    if (sourceGeneration != Volatile.Read(ref _staticIconSourceGeneration))
                     {
-                        _staticCorrelationDataLock.EnterWriteLock();
-                        try
-                        {
-                            Dictionary<Vector2, Dictionary<string, Mat>> replacedIcons =
-                                StaticIcons;
-                            StaticIcons = newIcons;
-                            _staticCorrelationData = newCorrelationData;
-                            _loadedStaticIconSizes.Clear();
-
-                            foreach (
-                                Mat icon in replacedIcons.Values.SelectMany(group => group.Values)
-                            )
-                                icon.Dispose();
-                        }
-                        finally
-                        {
-                            _staticCorrelationDataLock.ExitWriteLock();
-                        }
-                    }
-                    else
-                    {
-                        foreach (var icons in newIcons)
-                        {
-                            if (!StaticIcons.ContainsKey(icons.Key))
-                                StaticIcons.Add(icons.Key, new Dictionary<string, Mat>());
-                            foreach (var icon in icons.Value)
-                                StaticIcons[icons.Key].Add(icon.Key, icon.Value);
-                        }
+                        DisposeIconCollection(newIcons);
+                        continue;
                     }
 
-                    _loadedStaticIconSizes.Add(slotSize);
-                    if (pollIconSources)
-                        CommitStaticIconSourceSnapshot(directoryFingerprint, sourceHashes);
-                }
-                finally
-                {
-                    StaticIconsLock.ExitWriteLock();
+                    StaticIconsLock.EnterWriteLock();
+                    try
+                    {
+                        if (
+                            sourceGeneration
+                            != Volatile.Read(ref _staticIconSourceGeneration)
+                        )
+                        {
+                            DisposeIconCollection(newIcons);
+                            continue;
+                        }
+
+                        if (replaceExistingIcons)
+                        {
+                            _staticCorrelationDataLock.EnterWriteLock();
+                            try
+                            {
+                                Dictionary<Vector2, Dictionary<string, Mat>> replacedIcons =
+                                    StaticIcons;
+                                StaticIcons = newIcons;
+                                _staticCorrelationData = newCorrelationData;
+                                _loadedStaticIconSizes.Clear();
+                                DisposeIconCollection(replacedIcons);
+                            }
+                            finally
+                            {
+                                _staticCorrelationDataLock.ExitWriteLock();
+                            }
+                        }
+                        else
+                        {
+                            foreach (var icons in newIcons)
+                            {
+                                if (!StaticIcons.ContainsKey(icons.Key))
+                                    StaticIcons.Add(
+                                        icons.Key,
+                                        new Dictionary<string, Mat>()
+                                    );
+                                foreach (var icon in icons.Value)
+                                    StaticIcons[icons.Key].Add(icon.Key, icon.Value);
+                            }
+                        }
+
+                        _loadedStaticIconSizes.Add(slotSize);
+                        if (refreshIconSources)
+                            CommitStaticIconSourceSnapshot(
+                                directoryFingerprint,
+                                sourceHashes,
+                                sourceGeneration
+                            );
+                        return;
+                    }
+                    finally
+                    {
+                        StaticIconsLock.ExitWriteLock();
+                    }
                 }
             }
         }
 
         internal void InvalidateStaticIconSources()
         {
-            lock (_staticIconLoadLock)
-                _nextStaticIconSourcePollUtc = DateTime.MinValue;
+            Interlocked.Increment(ref _staticIconSourceGeneration);
+        }
+
+        private void EnsureStaticIconSourceWatcher()
+        {
+            lock (_staticIconSourceWatcherLock)
+            {
+                if (
+                    _staticIconSourceWatcher != null
+                    || !Directory.Exists(_config.PathConfig.StaticIcons)
+                )
+                    return;
+
+                var watcher = new FileSystemWatcher(_config.PathConfig.StaticIcons, "*.png")
+                {
+                    IncludeSubdirectories = false,
+                    NotifyFilter =
+                        NotifyFilters.FileName
+                        | NotifyFilters.Size
+                        | NotifyFilters.LastWrite
+                        | NotifyFilters.CreationTime,
+                };
+                watcher.Changed += OnStaticIconSourceChanged;
+                watcher.Created += OnStaticIconSourceChanged;
+                watcher.Deleted += OnStaticIconSourceChanged;
+                watcher.Renamed += OnStaticIconSourceRenamed;
+                watcher.Error += OnStaticIconSourceWatcherError;
+
+                try
+                {
+                    _staticIconSourceWatcher = watcher;
+                    watcher.EnableRaisingEvents = true;
+                }
+                catch
+                {
+                    _staticIconSourceWatcher = null;
+                    watcher.Dispose();
+                    throw;
+                }
+            }
+        }
+
+        private void OnStaticIconSourceChanged(object sender, FileSystemEventArgs eventArgs)
+        {
+            InvalidateStaticIconSources();
+        }
+
+        private void OnStaticIconSourceRenamed(object sender, RenamedEventArgs eventArgs)
+        {
+            InvalidateStaticIconSources();
+        }
+
+        private void OnStaticIconSourceWatcherError(object sender, ErrorEventArgs eventArgs)
+        {
+            InvalidateStaticIconSources();
+            lock (_staticIconSourceWatcherLock)
+            {
+                if (!ReferenceEquals(sender, _staticIconSourceWatcher))
+                    return;
+
+                _staticIconSourceWatcher.Dispose();
+                _staticIconSourceWatcher = null;
+            }
         }
 
         private void CommitStaticIconSourceSnapshot(
             string directoryFingerprint,
-            Dictionary<string, string> sourceHashes
+            Dictionary<string, string> sourceHashes,
+            long sourceGeneration
         )
         {
             _staticIconDirectoryFingerprint = directoryFingerprint;
             _staticIconSourceHashes = sourceHashes;
-            _nextStaticIconSourcePollUtc =
-                sourceHashes.Count == 0
-                    ? DateTime.MinValue
-                    : DateTime.UtcNow.Add(StaticIconSourcePollInterval);
+            _committedStaticIconSourceGeneration = sourceGeneration;
         }
 
         private static (
@@ -272,6 +384,7 @@ namespace RatEye
         private Dictionary<Vector2, Dictionary<string, Mat>> LoadNewIcons(
             string folderPath,
             Vector2 slotSizeFilter = null,
+            IReadOnlyDictionary<string, string> sourceHashes = null,
             IReadOnlyDictionary<string, Item> correlationData = null,
             bool skipExistingIcons = true
         )
@@ -283,16 +396,18 @@ namespace RatEye
             }
 
             var loadedIcons = new Dictionary<Vector2, Dictionary<string, Mat>>();
+            int sourceSnapshotChanged = 0;
             try
             {
-                var iconPathArray = Directory.GetFiles(folderPath, "*.png");
+                IEnumerable<string> iconPaths =
+                    sourceHashes?.Keys ?? Directory.GetFiles(folderPath, "*.png");
                 StaticIconsLock.EnterReadLock();
                 try
                 {
                     var configHash = GetConfigHash();
 
                     Parallel.ForEach(
-                        iconPathArray,
+                        iconPaths,
                         iconPath =>
                         {
                             Mat icon = null;
@@ -315,8 +430,14 @@ namespace RatEye
                                 )
                                     return;
 
-                                byte[] sourceBytes = File.ReadAllBytes(iconPath);
-                                string sourceHash = GetContentHash(sourceBytes);
+                                string sourceHash =
+                                    sourceHashes != null
+                                    && sourceHashes.TryGetValue(
+                                        iconPath,
+                                        out string snapshotSourceHash
+                                    )
+                                        ? snapshotSourceHash
+                                        : GetFileContentHash(iconPath);
                                 var useCache = _config.ProcessingConfig.UseCache;
                                 var cacheIdentity =
                                     $"{iconKey}|{sourceHash}"
@@ -342,6 +463,30 @@ namespace RatEye
 
                                 if (!cacheHit)
                                 {
+                                    byte[] sourceBytes;
+                                    try
+                                    {
+                                        sourceBytes = File.ReadAllBytes(iconPath);
+                                    }
+                                    catch (Exception e) when (IsRecoverableFileSystemException(e))
+                                    {
+                                        Interlocked.Exchange(ref sourceSnapshotChanged, 1);
+                                        return;
+                                    }
+
+                                    if (
+                                        sourceHashes != null
+                                        && !string.Equals(
+                                            GetContentHash(sourceBytes),
+                                            sourceHash,
+                                            StringComparison.Ordinal
+                                        )
+                                    )
+                                    {
+                                        Interlocked.Exchange(ref sourceSnapshotChanged, 1);
+                                        return;
+                                    }
+
                                     using var mat = Cv2.ImDecode(
                                         sourceBytes,
                                         ImreadModes.Unchanged
@@ -399,11 +544,13 @@ namespace RatEye
                 {
                     StaticIconsLock.ExitReadLock();
                 }
+
+                if (Volatile.Read(ref sourceSnapshotChanged) != 0)
+                    throw new StaticIconSnapshotChangedException();
             }
             catch
             {
-                foreach (Mat icon in loadedIcons.Values.SelectMany(group => group.Values))
-                    icon.Dispose();
+                DisposeIconCollection(loadedIcons);
                 throw;
             }
 
@@ -720,12 +867,15 @@ namespace RatEye
 
         #region Correlation Data Loading
 
-        private Dictionary<string, Item> BuildStaticCorrelationData()
+        private Dictionary<string, Item> BuildStaticCorrelationData(
+            IEnumerable<string> iconPaths = null
+        )
         {
             var correlationData = new Dictionary<string, Item>();
 
-            var iconPathArray = Directory.GetFiles(_config.PathConfig.StaticIcons, "*.png");
-            foreach (var iconPath in iconPathArray)
+            IEnumerable<string> sourcePaths =
+                iconPaths ?? Directory.GetFiles(_config.PathConfig.StaticIcons, "*.png");
+            foreach (var iconPath in sourcePaths)
             {
                 var itemId = System.IO.Path.GetFileNameWithoutExtension(iconPath);
                 var item = _config.RatStashDB.GetItem(itemId);
@@ -883,8 +1033,7 @@ namespace RatEye
             StaticIconsLock.EnterWriteLock();
             try
             {
-                foreach (Mat icon in StaticIcons.Values.SelectMany(group => group.Values))
-                    icon.Dispose();
+                DisposeIconCollection(StaticIcons);
                 StaticIcons.Clear();
             }
             finally
@@ -898,11 +1047,26 @@ namespace RatEye
             if (_disposed)
                 return;
 
+            lock (_staticIconSourceWatcherLock)
+            {
+                _staticIconSourceWatcher?.Dispose();
+                _staticIconSourceWatcher = null;
+            }
             ClearStaticIcons();
 
             StaticIconsLock.Dispose();
             _staticCorrelationDataLock.Dispose();
             _disposed = true;
         }
+
+        private static void DisposeIconCollection(
+            Dictionary<Vector2, Dictionary<string, Mat>> icons
+        )
+        {
+            foreach (Mat icon in icons.Values.SelectMany(group => group.Values))
+                icon.Dispose();
+        }
+
+        private sealed class StaticIconSnapshotChangedException : Exception { }
     }
 }

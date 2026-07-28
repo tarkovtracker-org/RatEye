@@ -307,6 +307,62 @@ public class RatEyeCacheTests
 	}
 
 	[Fact]
+	public void Static_icon_watcher_refreshes_content_without_periodic_polling()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-icon-watcher-test-" + Guid.NewGuid().ToString("N")
+		);
+		string iconsDirectory = Path.Combine(root, "icons");
+		string iconPath = Path.Combine(iconsDirectory, "one.png");
+		Directory.CreateDirectory(iconsDirectory);
+		string firstVersionPath = Path.Combine(root, "first.png");
+		string secondVersionPath = Path.Combine(root, "second.png");
+		WriteIcon(firstVersionPath);
+		WriteIcon(secondVersionPath, color: System.Drawing.Color.Red);
+		byte[] firstVersion = File.ReadAllBytes(firstVersionPath);
+		byte[] secondVersion = File.ReadAllBytes(secondVersionPath);
+		int sourceLength = Math.Max(firstVersion.Length, secondVersion.Length);
+		Array.Resize(ref firstVersion, sourceLength);
+		Array.Resize(ref secondVersion, sourceLength);
+		DateTime sourceTimestamp = DateTime.UtcNow.AddMinutes(-1);
+		File.WriteAllBytes(iconPath, firstVersion);
+		File.SetLastWriteTimeUtc(iconPath, sourceTimestamp);
+
+		Config config = CreateConfig(iconsDirectory);
+		try
+		{
+			using IconManager manager = new(config, Path.Combine(root, "cache"));
+			manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+			Mat original = manager.StaticIcons[new Vector2(1, 1)].Values.Single();
+
+			File.WriteAllBytes(iconPath, secondVersion);
+			File.SetLastWriteTimeUtc(iconPath, sourceTimestamp);
+
+			bool refreshed = SpinWait.SpinUntil(
+				() =>
+				{
+					manager.EnsureStaticIconsLoaded(new Vector2(1, 1));
+					return !ReferenceEquals(
+						original,
+						manager.StaticIcons[new Vector2(1, 1)].Values.Single()
+					);
+				},
+				TimeSpan.FromSeconds(5)
+			);
+
+			Assert.True(refreshed);
+			Assert.Equal(sourceLength, new FileInfo(iconPath).Length);
+			Assert.Equal(sourceTimestamp, File.GetLastWriteTimeUtc(iconPath));
+		}
+		finally
+		{
+			config.ProcessingConfig.InspectionConfig.Marker?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
 	public async Task Static_icon_refresh_keeps_previous_templates_available_until_replacements_are_ready()
 	{
 		string root = Path.Combine(
@@ -415,6 +471,15 @@ public class RatEyeCacheTests
 			Assert.Equal(
 				iconCount,
 				manager.StaticIcons[new Vector2(1, 1)].Count
+			);
+			Assert.All(
+				manager.StaticIcons[new Vector2(1, 1)].Keys,
+				iconKey =>
+					Assert.StartsWith(
+						Path.Combine(iconsDirectory, "replacement-"),
+						iconKey,
+						StringComparison.OrdinalIgnoreCase
+					)
 			);
 		}
 		finally
