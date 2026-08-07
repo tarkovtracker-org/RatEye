@@ -16,7 +16,6 @@ namespace RatEye.Processing
 		private readonly Config _config;
 		private readonly Bitmap _image;
 
-		private Config.Path PathConfig => _config.PathConfig;
 		private Config.Processing ProcessingConfig => _config.ProcessingConfig;
 		private Config.Processing.Inspection InspectionConfig => ProcessingConfig.InspectionConfig;
 
@@ -75,7 +74,7 @@ namespace RatEye.Processing
 						SearchMarker();
 						break;
 					default:
-						throw new Exception("Cannot satisfy unknown state.");
+						throw new InvalidOperationException("Cannot satisfy unknown state.");
 				}
 
 				_currentState++;

@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
-using System.Linq;
 using OpenCvSharp;
 using OpenCvSharp.Extensions;
 using RatStash;
@@ -169,7 +168,7 @@ namespace RatEye.Processing
 						ScanTitle();
 						break;
 					default:
-						throw new Exception("Cannot satisfy unknown state.");
+						throw new InvalidOperationException("Cannot satisfy unknown state.");
 				}
 
 				_currentState++;

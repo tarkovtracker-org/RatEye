@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace RatEye
+﻿namespace RatEye
 {
     /// <summary>
     /// A 2D <see cref="int"/> vector

@@ -10,7 +10,7 @@ namespace RatEye
         /// <summary>
         /// Log debug data
         /// </summary>
-        public static bool LogDebug = false;
+        public static bool LogDebug { get; set; } = false;
 
         /// <summary>
         /// Path configuration object

@@ -1,4 +1,5 @@
-﻿using OpenCvSharp;
+﻿using System.Globalization;
+using OpenCvSharp;
 
 namespace RatEye
 {
@@ -57,7 +58,7 @@ namespace RatEye
                     var components = new string[]
                     {
                         GridColor.ToString(),
-                        BackgroundAlpha.ToString(),
+                        BackgroundAlpha.ToString(CultureInfo.InvariantCulture),
                         MinGridColor.ToString(),
                         MaxGridColor.ToString(),
                         MinHighlightingColor.ToString(),
