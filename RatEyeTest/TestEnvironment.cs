@@ -1,7 +1,6 @@
 ﻿using System.IO;
 using RatEye;
 using RatStash;
-using Color = System.Drawing.Color;
 
 namespace RatEyeTest
 {
@@ -55,15 +54,5 @@ namespace RatEyeTest
 												&& item.GetType() != typeof(Pockets));
 		}
 
-		/// <summary>
-		/// Combine two paths
-		/// </summary>
-		/// <param name="basePath">Base path</param>
-		/// <param name="x">Path to be added</param>
-		/// <returns>The combined path</returns>
-		private static string Combine(string basePath, string x)
-		{
-			return System.IO.Path.Combine(basePath, x);
-		}
 	}
 }
