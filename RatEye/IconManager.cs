@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -442,13 +443,13 @@ namespace RatEye
                 FileShare.ReadWrite | FileShare.Delete
             );
             using SHA256 sha256 = SHA256.Create();
-            return string.Concat(sha256.ComputeHash(stream).Select(value => value.ToString("X2")));
+            return string.Concat(sha256.ComputeHash(stream).Select(value => value.ToString("X2", CultureInfo.InvariantCulture)));
         }
 
         private static string GetContentHash(byte[] content)
         {
             using SHA256 sha256 = SHA256.Create();
-            return string.Concat(sha256.ComputeHash(content).Select(value => value.ToString("X2")));
+            return string.Concat(sha256.ComputeHash(content).Select(value => value.ToString("X2", CultureInfo.InvariantCulture)));
         }
 
         private Dictionary<Vector2, Dictionary<string, Mat>> LoadNewIcons(
@@ -1011,7 +1012,7 @@ namespace RatEye
         /// <returns>The matching item</returns>
         internal Item GetItem(string iconKey)
         {
-            if (iconKey.StartsWith(_config.PathConfig.StaticIcons))
+            if (iconKey.StartsWith(_config.PathConfig.StaticIcons, StringComparison.Ordinal))
             {
                 _staticCorrelationDataLock.EnterReadLock();
                 try

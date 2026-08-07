@@ -74,7 +74,7 @@ namespace RatEye.Processing
 						ParseInventoryGrid();
 						break;
 					default:
-						throw new Exception("Cannot satisfy unknown state.");
+						throw new InvalidOperationException("Cannot satisfy unknown state.");
 				}
 
 				_currentState++;

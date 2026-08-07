@@ -189,7 +189,7 @@ namespace RatEye.Processing
 							OCR();
 						break;
 					default:
-						throw new Exception("Cannot satisfy unknown state.");
+						throw new InvalidOperationException("Cannot satisfy unknown state.");
 				}
 
 				_currentState++;
@@ -220,7 +220,7 @@ namespace RatEye.Processing
 
 			if (!IconConfig.UseStaticIcons)
 			{
-				throw new Exception(
+				throw new InvalidOperationException(
 					"No icons for template matching can be used."
 						+ nameof(IconConfig.UseStaticIcons)
 						+ " is false."

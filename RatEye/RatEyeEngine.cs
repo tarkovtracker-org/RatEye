@@ -111,7 +111,11 @@ namespace RatEye
 		/// its icon manager, Tesseract engines, and inspection marker. Complete
 		/// all work on returned processing objects before disposing the engine.
 		/// </remarks>
-		public void Dispose() => DisposeCore(throwOnFailure: false);
+		public void Dispose()
+		{
+			GC.SuppressFinalize(this);
+			DisposeCore(throwOnFailure: false);
+		}
 
 		/// <summary>
 		/// Releases processing resources and throws if any cleanup operation fails.
@@ -120,7 +124,13 @@ namespace RatEye
 		/// Prefer normal <see cref="Dispose"/> for using blocks so a cleanup failure cannot mask
 		/// an active processing exception. Call this method when explicit teardown must fail fast.
 		/// </remarks>
-		public void DisposeStrict() => DisposeCore(throwOnFailure: true);
+		public void DisposeStrict()
+		{
+			// CA1816: SuppressFinalize belongs only in the IDisposable.Dispose
+			// implementation; the finalizer is harmless after DisposeStrict because
+			// DisposeCore is idempotent via _disposed.
+			DisposeCore(throwOnFailure: true);
+		}
 
 		/// <summary>
 		/// Gets the aggregate failure from the cleanup attempt, if any.
@@ -194,7 +204,6 @@ namespace RatEye
 					Config.ProcessingConfig.InspectionConfig.DisposeMarker,
 					cleanupErrors
 				);
-				GC.SuppressFinalize(this);
 
 				if (cleanupErrors.Count > 0)
 				{

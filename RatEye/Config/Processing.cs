@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using RatStash;
 
 namespace RatEye
@@ -84,8 +85,8 @@ namespace RatEye
                 {
                     UseCache.ToString(),
                     Language.ToString(),
-                    Scale.ToString(),
-                    BaseSlotSize.ToString(),
+                    Scale.ToString(CultureInfo.InvariantCulture),
+                    BaseSlotSize.ToString(CultureInfo.InvariantCulture),
                     IconConfig.GetHash(),
                     InspectionConfig.GetHash(),
                     InventoryConfig.GetHash(),

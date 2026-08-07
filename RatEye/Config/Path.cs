@@ -80,12 +80,12 @@ namespace RatEye
             /// <summary>
             /// Path of the debug folder which is used to store debug information
             /// </summary>
-            public static string Debug = Combine(BaseDir, "Debug");
+            public static string Debug { get; set; } = Combine(BaseDir, "Debug");
 
             /// <summary>
             /// Path of the log file
             /// </summary>
-            public static string LogFile = Combine(BaseDir, "Log.txt");
+            public static string LogFile { get; set; } = Combine(BaseDir, "Log.txt");
 
             /// <summary>
             /// Create a new path config instance

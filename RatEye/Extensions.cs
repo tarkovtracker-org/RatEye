@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Linq;
@@ -357,7 +358,7 @@ namespace RatEye
             var buffer = Encoding.UTF8.GetBytes(value);
             using var sha256 = SHA256.Create();
             var hash = sha256.ComputeHash(buffer);
-            return string.Concat(hash.Select(x => x.ToString("X2")));
+            return string.Concat(hash.Select(x => x.ToString("X2", CultureInfo.InvariantCulture)));
         }
 
         /// <summary>
