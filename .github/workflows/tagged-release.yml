@@ -89,9 +89,9 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub release
-        # Only tag pushes publish. A manual dispatch from a branch just validates and
-        # uploads the workflow artifact so the packaging path can be exercised safely.
-        if: github.ref_type == 'tag'
+        # Only tag pushes publish. A manual dispatch (from a branch or a tag) just validates
+        # and uploads the workflow artifact so the packaging path can be exercised safely.
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
