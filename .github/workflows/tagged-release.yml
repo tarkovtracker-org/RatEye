@@ -1,32 +1,117 @@
-name: tagged-release
+name: Tagged release
+
+# Builds, tests, and packages RatEye for a version tag, then publishes the
+# NuGet package files as GitHub release assets. Nothing is pushed to nuget.org:
+# this fork does not own the upstream package ID and has no publishing secret.
+
+permissions:
+  contents: read
 
 on:
   push:
-    branches: [ master ]
     tags:
-      - v*
+      - "v*"
   workflow_dispatch:
-        
-jobs:
-  publish-nuget:
-    runs-on: windows-latest
 
+concurrency:
+  # Serialize releases so two tags cannot race to publish at once.
+  group: tagged-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      # Required to create the GitHub release and upload the package assets.
+      contents: write
     steps:
-      - uses: actions/checkout@v2
-      - name: Setup .NET Core
-        uses: actions/setup-dotnet@v1
+      - name: Check out source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          dotnet-version: 7.0.x
-      - name: Install dependencies
-        run: dotnet restore
+          persist-credentials: false
+
+      - name: Resolve package version
+        id: version
+        run: |
+          $project = New-Object System.Xml.XmlDocument
+          $project.Load((Join-Path $PWD 'RatEye/RatEye.csproj'))
+          $versionNode = $project.SelectSingleNode("/*[local-name()='Project']/*[local-name()='PropertyGroup']/*[local-name()='Version']")
+          if ($null -eq $versionNode -or [string]::IsNullOrWhiteSpace($versionNode.InnerText)) {
+            throw 'RatEye/RatEye.csproj is missing the package Version element.'
+          }
+          $version = $versionNode.InnerText.Trim()
+          $tag = 'v' + $version
+          $isPrerelease = $version -match '^[^+]*-'
+
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne $tag) {
+            throw "Tag '$($env:GITHUB_REF_NAME)' does not match RatEye/RatEye.csproj Version '$version' (expected '$tag')."
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "is-prerelease=$($isPrerelease.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore RatEye.sln
+
+      - name: Build Release
+        run: dotnet build RatEye.sln -c Release --no-restore
+
       - name: Test
-        run: dotnet test
-      - name: Publish to NuGet
-        uses: alirezanet/publish-nuget@v3.0.4
+        run: dotnet test RatEye.sln -c Release --no-build --no-restore
+
+      - name: Pack
+        run: dotnet pack RatEye/RatEye.csproj -c Release --no-build --no-restore --include-symbols -p:SymbolPackageFormat=snupkg --output artifacts/nuget
+
+      - name: Verify package output
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $package = Join-Path $PWD "artifacts/nuget/RatEye.$env:VERSION.nupkg"
+          $symbols = Join-Path $PWD "artifacts/nuget/RatEye.$env:VERSION.snupkg"
+          foreach ($path in @($package, $symbols)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              Get-ChildItem -LiteralPath (Join-Path $PWD 'artifacts/nuget') | Format-Table Name, Length
+              throw "Expected package file '$path' was not produced."
+            }
+          }
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          PROJECT_FILE_PATH: RatEye/RatEye.csproj
-          TAG_COMMIT: true
-          TAG_FORMAT: v*
-          NUGET_KEY: ${{secrets.NUGET_API_KEY}}
-          NUGET_SOURCE: https://api.nuget.org
-          INCLUDE_SYMBOLS: true
+          name: RatEye-${{ steps.version.outputs.version }}-nuget
+          path: artifacts/nuget/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        # Only tag pushes publish. A manual dispatch from a branch just validates and
+        # uploads the workflow artifact so the packaging path can be exercised safely.
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.version.outputs.is-prerelease }}
+        run: |
+          $assets = @(Get-ChildItem -LiteralPath (Join-Path $PWD 'artifacts/nuget') -File | ForEach-Object { $_.FullName })
+          if ($assets.Count -eq 0) {
+            throw 'No package assets found to publish.'
+          }
+          $arguments = @(
+            'release', 'create', $env:TAG,
+            '--repo', $env:GITHUB_REPOSITORY,
+            '--title', "RatEye $env:TAG",
+            '--generate-notes',
+            '--verify-tag'
+          )
+          if ($env:IS_PRERELEASE -eq 'true') {
+            $arguments += '--prerelease'
+          }
+          & gh @arguments @assets
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release create failed with exit code $LASTEXITCODE."
+          }
