@@ -45,6 +45,10 @@ requiring a NuGet publication for every development commit.
 RatEye remains independently packageable. Its package version is owned by this
 repository and is not tied to RatScanner's application version.
 
+Pushing a `v<Version>` tag that matches `RatEye/RatEye.csproj` runs
+`.github/workflows/tagged-release.yml`, which builds, tests, packs, and attaches the
+`.nupkg` and `.snupkg` files to a GitHub release. Nothing is pushed to nuget.org.
+
 ## Reproducible scan benchmark
 
 `RatEye.Benchmarks` replays versioned `*.ratdiag.json` manifests from a
