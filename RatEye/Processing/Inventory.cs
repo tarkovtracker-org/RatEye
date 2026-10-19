@@ -641,7 +641,8 @@ namespace RatEye.Processing
 				var region = bb.Intersect(new Rect(0, 0, _image.Width, _image.Height));
 				if (region.Width <= 0 || region.Height <= 0)
 					throw new ArgumentOutOfRangeException(nameof(position), "The icon region does not intersect the image.");
-				using var regionMat = new Mat(_image, region).Clone();
+				using var sourceRegion = new Mat(_image, region);
+				using var regionMat = sourceRegion.Clone();
 				var iconImage = regionMat.ToBitmap();
 				var icon = new Icon(
 					iconImage,
