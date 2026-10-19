@@ -351,6 +351,64 @@ public class OpenCvPipelineTests
 	}
 
 	[Fact]
+	public void WarmUpIconTemplates_loads_the_requested_slot_size_before_any_scan()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-warmup-test-" + Guid.NewGuid().ToString("N")
+		);
+		Directory.CreateDirectory(root);
+		try
+		{
+			foreach (string id in new[] { "small", "wide" })
+			{
+				int width = id == "small" ? 64 : 127;
+				using Bitmap iconSource = new(width, 64);
+				using Graphics graphics = Graphics.FromImage(iconSource);
+				graphics.Clear(System.Drawing.Color.FromArgb(255, 35, 140, 210));
+				using Mat iconMat = BitmapConverter.ToMat(iconSource);
+				Assert.True(Cv2.ImWrite(Path.Combine(root, id + ".png"), iconMat));
+			}
+
+			RatStash.Item small = new() { Id = "small", Name = "Small", ShortName = "S", Width = 1, Height = 1 };
+			RatStash.Item wide = new() { Id = "wide", Name = "Wide", ShortName = "W", Width = 2, Height = 1 };
+			Config config = CreateProcessingConfig(optimizeHighlighted: false);
+			config.PathConfig.StaticIcons = root;
+			config.ProcessingConfig.IconConfig.UseStaticIcons = true;
+
+			using RatEyeEngine engine = new(config, RatStash.Database.FromItems([small, wide]));
+			Assert.Empty(engine.Config.IconManager.StaticIcons);
+
+			engine.WarmUpIconTemplates(new Vector2(2, 1));
+
+			IconManager icons = engine.Config.IconManager;
+			KeyValuePair<string, Mat> loaded = Assert.Single(Assert.Single(icons.StaticIcons).Value);
+			Assert.Equal(new Vector2(2, 1), Assert.Single(icons.StaticIcons).Key);
+			Assert.EndsWith("wide.png", loaded.Key, StringComparison.Ordinal);
+
+			// A repeat warm-up of a loaded size is a no-op, not a reload.
+			Mat before = loaded.Value;
+			engine.WarmUpIconTemplates(new Vector2(2, 1));
+			Assert.Same(before, Assert.Single(icons.StaticIcons[new Vector2(2, 1)]).Value);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
+	public void WarmUpIconTemplates_after_dispose_throws_instead_of_reloading()
+	{
+		Config config = CreateProcessingConfig(optimizeHighlighted: false);
+		config.ProcessingConfig.IconConfig.UseStaticIcons = true;
+		RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		engine.Dispose();
+
+		Assert.Throws<ObjectDisposedException>(() => engine.WarmUpIconTemplates(new Vector2(1, 1)));
+	}
+
+	[Fact]
 	public void Missing_static_icon_data_degrades_without_blocking_engine_startup()
 	{
 		string missingDirectory = Path.Combine(

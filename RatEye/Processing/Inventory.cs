@@ -177,7 +177,8 @@ namespace RatEye.Processing
 				ContourApproximationModes.ApproxSimple
 			);
 
-			using var debugMat = _image.Clone();
+			// Only pay for a full-image copy when debug images are actually written.
+			using var debugMat = Config.LogDebug ? _image.Clone() : null;
 			if (Config.LogDebug)
 				Cv2.DrawContours(debugMat, contours, -1, new(255, 0, 0));
 
@@ -199,8 +200,10 @@ namespace RatEye.Processing
 			}
 
 			if (Config.LogDebug)
+			{
 				boundingBoxes.ForEach(b => debugMat.Rectangle(b, new(0, 0, 255)));
-			Logger.LogDebugMat(debugMat, "inventory/boundingBoxes");
+				Logger.LogDebugMat(debugMat, "inventory/boundingBoxes");
+			}
 
 			_boundingBoxes = boundingBoxes;
 		}
@@ -634,8 +637,12 @@ namespace RatEye.Processing
 				if (existingIcon != null)
 					return existingIcon;
 
-				using var image = _image.ToBitmap();
-				var iconImage = image.Crop(bb.X, bb.Y, bb.Width, bb.Height);
+				// Convert only the (clamped) icon region instead of the whole capture.
+				var region = bb.Intersect(new Rect(0, 0, _image.Width, _image.Height));
+				if (region.Width <= 0 || region.Height <= 0)
+					throw new ArgumentOutOfRangeException(nameof(position), "The icon region does not intersect the image.");
+				using var regionMat = new Mat(_image, region).Clone();
+				var iconImage = regionMat.ToBitmap();
 				var icon = new Icon(
 					iconImage,
 					iconPosition,

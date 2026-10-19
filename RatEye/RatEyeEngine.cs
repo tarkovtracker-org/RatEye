@@ -44,6 +44,30 @@ namespace RatEye
 		}
 
 		/// <summary>
+		/// Loads the static icon templates for one slot size ahead of time, so the first
+		/// icon scan of that size does not pay for hashing the icon folder and decoding,
+		/// rescaling, or reading cached templates. Already-loaded sizes return quickly.
+		/// </summary>
+		/// <param name="slotSize">Item size in inventory slots, for example (1, 2).</param>
+		/// <remarks>
+		/// Safe to call from a background thread while scans run; loading is serialized
+		/// with the lazy load scans perform. The caller must not dispose this engine while
+		/// a warm-up call is still running.
+		/// </remarks>
+		public void WarmUpIconTemplates(Vector2 slotSize)
+		{
+			if (slotSize == null)
+				throw new ArgumentNullException(nameof(slotSize));
+			if (!Config.ProcessingConfig.IconConfig.UseStaticIcons)
+				return;
+
+			IconManager iconManager = Config.IconManager;
+			if (iconManager == null)
+				throw new ObjectDisposedException(nameof(RatEyeEngine));
+			iconManager.EnsureStaticIconsLoaded(slotSize);
+		}
+
+		/// <summary>
 		/// Create new <see cref="MultiInspection"/> instance
 		/// </summary>
 		/// <param name="image">The image to process</param>
