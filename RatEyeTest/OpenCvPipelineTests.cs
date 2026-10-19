@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using OpenCvSharp;
 using OpenCvSharp.Extensions;
 using RatEye;
@@ -343,6 +344,59 @@ public class OpenCvPipelineTests
 			Assert.True(result.DetectionConfidence > 0.9999f);
 			Assert.Equal(Vector2.Zero, result.ItemPosition);
 			Assert.False(result.Rotated);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Fact]
+	public void Rotated_icon_item_position_maps_back_to_unrotated_crop_coordinates()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-rotated-test-" + Guid.NewGuid().ToString("N")
+		);
+		Directory.CreateDirectory(root);
+		try
+		{
+			// A 2x1 item template (127x64) with an asymmetric pattern, so only one
+			// placement matches.
+			using Mat template = new(64, 127, MatType.CV_8UC4, new Scalar(40, 140, 210, 255));
+			Cv2.Rectangle(template, new Rect(4, 4, 30, 20), new Scalar(240, 240, 240, 255), -1);
+			Cv2.Circle(template, new OpenCvSharp.Point(100, 45), 12, new Scalar(20, 60, 20, 255), -1);
+			Assert.True(Cv2.ImWrite(Path.Combine(root, "wide.png"), template));
+
+			RatStash.Item wide = new() { Id = "wide", Name = "Wide", ShortName = "W", Width = 2, Height = 1 };
+			Config config = CreateProcessingConfig(optimizeHighlighted: false);
+			config.PathConfig.StaticIcons = root;
+			config.ProcessingConfig.IconConfig.UseStaticIcons = true;
+			config.ProcessingConfig.IconConfig.ScanRotatedIcons = true;
+
+			using RatEyeEngine engine = new(config, RatStash.Database.FromItems([wide]));
+			engine.Config.IconManager.EnsureStaticIconsLoaded(new Vector2(2, 1));
+			using Mat loaded = engine.Config.IconManager.StaticIcons[new Vector2(2, 1)].Values.Single().Clone();
+
+			// The game shows the item rotated (tall); place it off-centre so the
+			// padding on the left (8 px) differs from the right (28 px).
+			using Mat canvas = new(170, 100, MatType.CV_8UC3, new Scalar(15, 15, 15));
+			using Mat shown = new();
+			Cv2.Rotate(loaded, shown, RotateFlags.Rotate90Clockwise);
+			using (Mat target = new(canvas, new Rect(8, 30, shown.Width, shown.Height)))
+				shown.CopyTo(target);
+
+			using RatEye.Processing.Icon icon = new(
+				canvas.ToBitmap(),
+				Vector2.Zero,
+				new Vector2(canvas.Width, canvas.Height),
+				engine.Config,
+				ownsIcon: true
+			);
+
+			Assert.Equal("wide", icon.Item.Id);
+			Assert.True(icon.Rotated);
+			Assert.Equal(new Vector2(8, 30), icon.ItemPosition);
 		}
 		finally
 		{
