@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using OpenCvSharp;
 using OpenCvSharp.Extensions;
 using RatEye;
@@ -343,6 +344,96 @@ public class OpenCvPipelineTests
 			Assert.True(result.DetectionConfidence > 0.9999f);
 			Assert.Equal(Vector2.Zero, result.ItemPosition);
 			Assert.False(result.Rotated);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Theory]
+	[InlineData(true, 1f, 8, 30, 8, 30)]
+	[InlineData(true, 1f, 28, 8, 28, 8)]
+	[InlineData(true, 1f, 0, 0, 0, 0)]
+	[InlineData(false, 1f, 8, 30, 8, 30)]
+	[InlineData(false, 1f, 28, 8, 28, 8)]
+	[InlineData(false, 1f, 0, 0, 0, 0)]
+	[InlineData(true, 1.25f, 9, 31, 11, 39)]
+	[InlineData(false, 1.25f, 9, 31, 11, 39)]
+	[InlineData(true, 1.5f, 9, 31, 14, 46)]
+	[InlineData(false, 1.5f, 9, 31, 14, 46)]
+	public void Icon_item_position_maps_back_to_screen_coordinates(
+		bool rotated,
+		float scale,
+		int x,
+		int y,
+		int expectedX,
+		int expectedY
+	)
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			"RatEye-rotated-test-" + Guid.NewGuid().ToString("N")
+		);
+		Directory.CreateDirectory(root);
+		try
+		{
+			// A 2x1 item template (127x64) with an asymmetric pattern, so only one
+			// placement matches.
+			using Mat template = new(64, 127, MatType.CV_8UC4, new Scalar(40, 140, 210, 255));
+			Cv2.Rectangle(template, new Rect(4, 4, 30, 20), new Scalar(240, 240, 240, 255), -1);
+			Cv2.Circle(template, new OpenCvSharp.Point(100, 45), 12, new Scalar(20, 60, 20, 255), -1);
+			Assert.True(Cv2.ImWrite(Path.Combine(root, "wide.png"), template));
+
+			RatStash.Item wide = new() { Id = "wide", Name = "Wide", ShortName = "W", Width = 2, Height = 1 };
+			Config config = CreateProcessingConfig(optimizeHighlighted: false);
+			config.PathConfig.StaticIcons = root;
+			config.ProcessingConfig.Scale = scale;
+			config.ProcessingConfig.IconConfig.UseStaticIcons = true;
+			config.ProcessingConfig.IconConfig.ScanRotatedIcons = true;
+
+			using RatEyeEngine engine = new(config, RatStash.Database.FromItems([wide]));
+			engine.Config.IconManager.EnsureStaticIconsLoaded(new Vector2(2, 1));
+			using Mat loaded = engine.Config.IconManager.StaticIcons[new Vector2(2, 1)].Values.Single().Clone();
+
+			// Keep dimensions divisible by four so fractional scales do not change
+			// the canvas dimensions after the scanner rescales it. Exercise unequal
+			// padding, a border placement, and ordinary as well as rotated items.
+			using Mat canvas = new(
+				rotated ? 172 : 100,
+				rotated ? 100 : 172,
+				MatType.CV_8UC3,
+				new Scalar(15, 15, 15)
+			);
+			using Mat shown = new();
+			if (rotated)
+				Cv2.Rotate(loaded, shown, RotateFlags.Rotate90Clockwise);
+			else
+				loaded.CopyTo(shown);
+			using (Mat target = new(canvas, new Rect(x, y, shown.Width, shown.Height)))
+				shown.CopyTo(target);
+
+			using Mat screen = new();
+			Cv2.Resize(
+				canvas,
+				screen,
+				new OpenCvSharp.Size((int)(canvas.Width * scale), (int)(canvas.Height * scale)),
+				0,
+				0,
+				InterpolationFlags.Cubic
+			);
+			using RatEye.Processing.Icon icon = new(
+				screen.ToBitmap(),
+				Vector2.Zero,
+				new Vector2(screen.Width, screen.Height),
+				engine.Config,
+				ownsIcon: true
+			);
+
+			Assert.Equal("wide", icon.Item.Id);
+			Assert.True(icon.DetectionConfidence > 0.99f);
+			Assert.Equal(rotated, icon.Rotated);
+			Assert.Equal(new Vector2(expectedX, expectedY), icon.ItemPosition);
 		}
 		finally
 		{
