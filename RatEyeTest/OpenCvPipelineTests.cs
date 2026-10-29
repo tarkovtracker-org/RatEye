@@ -409,6 +409,17 @@ public class OpenCvPipelineTests
 	}
 
 	[Fact]
+	public void WarmUpIconTemplates_after_dispose_throws_when_static_icons_are_disabled()
+	{
+		Config config = CreateProcessingConfig(optimizeHighlighted: false);
+		config.ProcessingConfig.IconConfig.UseStaticIcons = false;
+		RatEyeEngine engine = new(config, RatStash.Database.FromItems([]));
+		engine.Dispose();
+
+		Assert.Throws<ObjectDisposedException>(() => engine.WarmUpIconTemplates(new Vector2(1, 1)));
+	}
+
+	[Fact]
 	public void Missing_static_icon_data_degrades_without_blocking_engine_startup()
 	{
 		string missingDirectory = Path.Combine(

@@ -58,10 +58,15 @@ namespace RatEye
 		{
 			if (slotSize == null)
 				throw new ArgumentNullException(nameof(slotSize));
-			if (!Config.ProcessingConfig.IconConfig.UseStaticIcons)
-				return;
 
-			IconManager iconManager = Config.IconManager;
+			IconManager iconManager;
+			lock (_lifecycleSync)
+			{
+				ThrowIfDisposed();
+				if (!Config.ProcessingConfig.IconConfig.UseStaticIcons)
+					return;
+				iconManager = Config.IconManager;
+			}
 			if (iconManager == null)
 				throw new ObjectDisposedException(nameof(RatEyeEngine));
 			iconManager.EnsureStaticIconsLoaded(slotSize);
