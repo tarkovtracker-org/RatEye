@@ -232,6 +232,7 @@ namespace RatEye.Processing
 			var slotSize = rotated ? new Vector2(iconSlotSize.Y, iconSlotSize.X) : iconSlotSize;
 			(string match, float confidence, Vector2 pos) result = default;
 			Item matchedItem = null;
+			int matchedTemplateHeight = 0;
 			iconManager.EnsureStaticIconsLoaded(slotSize);
 			iconManager.StaticIconsLock.EnterReadLock();
 			try
@@ -240,7 +241,10 @@ namespace RatEye.Processing
 				{
 					result = TemplateMatchSub(source, icons);
 					if (result.confidence > _detectionConfidence)
+					{
 						matchedItem = iconManager.GetItem(result.match);
+						matchedTemplateHeight = icons[result.match].Rows;
+					}
 				}
 			}
 			finally
@@ -258,9 +262,19 @@ namespace RatEye.Processing
 			}
 
 			_rotated = rotated;
-			_itemPosition =
-				(rotated ? new(result.pos.Y, result.pos.X) : result.pos)
-				* _config.ProcessingConfig.Scale;
+			// The source was rotated 90 degrees counter-clockwise, which maps an unrotated
+			// pixel (x, y) to (y, W - 1 - x). A template matched at (rx, ry) with height th
+			// therefore starts at (W - ry - th, rx) in the unrotated crop. Swapping to
+			// (ry, rx) was only right when the padding around the item was symmetric.
+			Vector2 unrotatedPosition = rotated
+				? new Vector2(_scaledIcon.Width - result.pos.Y - matchedTemplateHeight, result.pos.X)
+				: result.pos;
+			float scale = _config.ProcessingConfig.Scale;
+			// Round rather than truncate when mapping back to screen pixels.
+			_itemPosition = new Vector2(
+				(int)Math.Round(unrotatedPosition.X * scale),
+				(int)Math.Round(unrotatedPosition.Y * scale)
+			);
 			_detectionConfidence = result.confidence;
 			_item = matchedItem;
 			_itemExtraInfo = null;
