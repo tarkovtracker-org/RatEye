@@ -178,12 +178,14 @@ namespace RatEye.Processing
 			);
 
 			// Only pay for a full-image copy when debug images are actually written.
-			using var debugMat = Config.LogDebug ? _image.Clone() : null;
-			if (Config.LogDebug)
+			// Read the flag once so allocation and drawing cannot disagree if it changes mid-parse.
+			bool logDebug = Config.LogDebug;
+			using var debugMat = logDebug ? _image.Clone() : null;
+			if (logDebug)
 				Cv2.DrawContours(debugMat, contours, -1, new(255, 0, 0));
 
 			var boundingBoxes = contours.Select(Cv2.BoundingRect).ToList();
-			if (Config.LogDebug)
+			if (logDebug)
 				boundingBoxes.ForEach(b => debugMat.Rectangle(b, new(0, 255, 0)));
 
 			// Merge overlapping bounding boxes
@@ -199,7 +201,7 @@ namespace RatEye.Processing
 				}
 			}
 
-			if (Config.LogDebug)
+			if (logDebug)
 			{
 				boundingBoxes.ForEach(b => debugMat.Rectangle(b, new(0, 0, 255)));
 				Logger.LogDebugMat(debugMat, "inventory/boundingBoxes");
